@@ -4,8 +4,8 @@ import Foundation
 
 var targets: [Target] = [
     .target(
-        name: "WINRSDK",
-        path: "WINRSDK",
+        name: "AvafliSDK",
+        path: "AvafliSDK",
         resources: [
             .process("Resources")
         ]
@@ -16,25 +16,25 @@ var targets: [Target] = [
 // whose directory is missing makes `swift build` fail in a fresh clone of the
 // mirror. Declare it only where the directory actually exists (the private
 // monorepo), so this one manifest is correct in both repos.
-if FileManager.default.fileExists(atPath: Context.packageDirectory + "/WINRSDKTests") {
+if FileManager.default.fileExists(atPath: Context.packageDirectory + "/AvafliSDKTests") {
     targets.append(
         .testTarget(
-            name: "WINRSDKTests",
-            dependencies: ["WINRSDK"],
-            path: "WINRSDKTests"
+            name: "AvafliSDKTests",
+            dependencies: ["AvafliSDK"],
+            path: "AvafliSDKTests"
         )
     )
 }
 
 let package = Package(
-    name: "WINRSDK",
+    name: "AvafliSDK",
     platforms: [
         .iOS(.v15)
     ],
     products: [
         .library(
-            name: "WINRSDK",
-            targets: ["WINRSDK"]
+            name: "AvafliSDK",
+            targets: ["AvafliSDK"]
         )
     ],
     targets: targets

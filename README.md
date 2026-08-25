@@ -1,23 +1,23 @@
-# WINR iOS SDK
+# Avafli iOS SDK
 **Drop-in sweepstakes, prizing, and gamification for your iOS app**
 
 [![Platform](https://img.shields.io/badge/platform-iOS%2015.0%2B-blue.svg)](https://developer.apple.com/ios/)
 [![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange.svg)](https://swift.org)
 [![SPM](https://img.shields.io/badge/SPM-compatible-brightgreen.svg)](https://swift.org/package-manager/)
-[![CocoaPods](https://img.shields.io/badge/CocoaPods-2.9.5-red.svg)](https://cocoapods.org/pods/WINRSDK)
+[![CocoaPods](https://img.shields.io/badge/CocoaPods-3.0.0-red.svg)](https://cocoapods.org/pods/AvafliSDK)
 
 ---
 
 ## Overview
 
-WINR lets you add daily-entry sweepstakes and prize experiences to your app in under 20 lines of code. The V2 experience is a bottom drawer that opens itself on the first app-open of each day, claims the user's daily entries automatically, and celebrates the result. You integrate once; prize configuration and branding are managed server-side from the WINR dashboard.
+Avafli lets you add daily-entry sweepstakes and prize experiences to your app in under 20 lines of code. The V2 experience is a bottom drawer that opens itself on the first app-open of each day, claims the user's daily entries automatically, and celebrates the result. You integrate once; prize configuration and branding are managed server-side from the Avafli dashboard.
 
 **Key capabilities:**
 - **Daily entry sweepstakes** — Users earn entries every day they engage
 - **V2 auto-open experience** — The bottom-drawer experience opens itself on the first app-open of each day and grants entries automatically
 - **Daily streak ladder + auto-claim** — A simple +10-entries-per-day ladder, claimed automatically the moment the drawer opens
 - **Email capture with explicit consent** — The SDK captures an email through its own screen, with an unchecked-by-default marketing-consent box and a publisher-configurable age gate
-- **Cross-device verified adoption** — Typing an email that matches an existing WINR account requires a 6-digit code before the streak merges to the new device
+- **Cross-device verified adoption** — Typing an email that matches an existing Avafli account requires a 6-digit code before the streak merges to the new device
 - **"Verify your email" soft-verification** — A persistent chip on the dashboard lets users confirm a brand-new typed address; it never blocks daily play, only prize-draw eligibility
 - **Winner announcements** — "WE HAVE A WINNER!" banner and winner dialog, driven by the giveaway's `latestWinner`
 - **Visit mode** — A never-resetting streak variant for low-frequency apps
@@ -29,49 +29,49 @@ WINR lets you add daily-entry sweepstakes and prize experiences to your app in u
 ## Quick Start
 
 ```swift
-import WINRSDK
+import AvafliSDK
 
-let config = WINRConfiguration(
+let config = AvafliConfiguration(
     apiKey: "YOUR_API_KEY",  // debug builds: use your winr_test_ sandbox key
     bundleId: "com.example.myapp",
-    user: WINRUser(
+    user: AvafliUser(
         id: "user_123",             // only id is required — pass whatever identity you have
         firstName: "Jane",
         lastName: "Doe",
         email: "jane@example.com"   // include it when you have it — pre-fills & locks the capture form (consent stays explicit)
     ),
     // Nobody signed in? use user: .guest
-    options: WINROptions(
+    options: AvafliOptions(
         logging: .error,            // use .debug while integrating
         enablePushReminders: true   // streak reminders via YOUR Firebase project (upload the key in your dashboard)
     )
 )
-WINR.configure(config)
+Avafli.configure(config)
 
 // Done — the experience auto-opens once per day. No further calls needed.
 // Push reminders: forward your FCM token so they can deliver:
-//   WINR.didReceiveFCMToken(token)
+//   Avafli.didReceiveFCMToken(token)
 ```
 
 > **Auto-open:** After `configure(_:)`, the SDK presents the experience automatically once per calendar day (on launch and whenever the app returns to the foreground on a new day). It can be disabled remotely via the dashboard's `experience.autoOpenEnabled` kill switch; unregistered users see at most 3 auto-opens until they submit an email, and RTD opted-out users never see it.
 
 ### Identity — pass what you have, the SDK captures the rest
 
-Only `id` is required. Construct a `WINRUser` from whatever identity data you
+Only `id` is required. Construct a `AvafliUser` from whatever identity data you
 already hold — even just an id — and the SDK fills in the gaps: it captures the
 email through its own screen, and the name at prize-claim time if the user wins.
 There are three cases:
 
-**1. Signed-in user without an email (the common case, and WINR's main value).**
+**1. Signed-in user without an email (the common case, and Avafli's main value).**
 Pass the id plus whatever you have and OMIT `email`. The SDK shows its capture
 screen and the user types their email — so you capture an address you didn't
 have before:
 
 ```swift
-user: WINRUser(id: "user_123", firstName: "Jane", lastName: "Doe")   // no email
+user: AvafliUser(id: "user_123", firstName: "Jane", lastName: "Doe")   // no email
 ```
 
-Even just `WINRUser(id: "user_123")` is valid — name is collected later at
+Even just `AvafliUser(id: "user_123")` is valid — name is collected later at
 prize-claim, only if they win.
 
 **2. Signed-in user with an email.** Pass `email` too and it pre-fills and
@@ -79,13 +79,13 @@ prize-claim, only if they win.
 `email` is a plain `String`:
 
 ```swift
-user: WINRUser(id: "user_123", firstName: "Jane", lastName: "Doe", email: "jane@example.com")
+user: AvafliUser(id: "user_123", firstName: "Jane", lastName: "Doe", email: "jane@example.com")
 ```
 
-**3. No signed-in user at all.** Pass `WINRUser.guest`:
+**3. No signed-in user at all.** Pass `AvafliUser.guest`:
 
 ```swift
-WINR.configure(WINRConfiguration(
+Avafli.configure(AvafliConfiguration(
     apiKey: "winr_live_…",
     environment: .production,  // optional — defaults to .production (2.8.0+)
     bundleId: Bundle.main.bundleIdentifier!,
@@ -93,27 +93,27 @@ WINR.configure(WINRConfiguration(
 ))
 ```
 
-The SDK mints a stable per-install guest id (`winr_guest_…`) for attribution —
+The SDK mints a stable per-install guest id (`avafli_guest_…`) for attribution —
 never fabricate placeholder ids yourself. The experience is fully functional
 for guests. When the user signs in, call `configure` again with the real user:
 attribution upgrades in place and the streak carries over automatically.
 
 ## Installation
 
-WINR is distributed via **Swift Package Manager** and **CocoaPods**:
+Avafli is distributed via **Swift Package Manager** and **CocoaPods**:
 
 ### Xcode
 
 1. **File → Add Package Dependencies…**
-2. Enter the repository URL: `https://github.com/AVAFLI/winr_ios_sdk.git`
-3. Set dependency rule to **Up to Next Major Version** from `2.9.5`
-4. Add the `WINR` library to your app target
+2. Enter the repository URL: `https://github.com/AVAFLI/avafli_ios_sdk.git`
+3. Set dependency rule to **Up to Next Major Version** from `3.0.0`
+4. Add the `AvafliSDK` library to your app target
 
 ### Package.swift
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/AVAFLI/winr_ios_sdk.git", from: "2.9.5")
+    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.0.0")
 ]
 ```
 
@@ -122,7 +122,7 @@ dependencies: [
 Add the pod to your `Podfile`:
 
 ```ruby
-pod 'WINRSDK', '~> 2.9'
+pod 'AvafliSDK', '~> 3.0'
 ```
 
 Then run:
@@ -133,42 +133,55 @@ pod install
 
 > **Note:** Contact [AVAFLI](https://avafli-website.web.app/sdk/pricing) to obtain an API key.
 
+### Migrating from WINR SDK 2.x
+
+3.0.0 is a pure brand rename — swap the install coordinates above
+(`pod 'WINRSDK'` → `pod 'AvafliSDK'`, old `winr_ios_sdk` SPM URL → this
+repository) and rename the `WINR` prefix to `Avafli` on every SDK symbol
+(`WINR.configure` → `Avafli.configure`, `WINRConfiguration` →
+`AvafliConfiguration`, …). Analytics event names, the share-link UTM
+medium, and newly minted guest ids also move from the `winr_` to the
+`avafli_` prefix — update any dashboards filtering on the old event names.
+Behavior, backend, and stored user state are unchanged; see the
+[CHANGELOG](CHANGELOG.md) for the full symbol and wire-name table. 2.9.x
+keeps working but is frozen.
+
 ## Configuration
 
 Initialize the SDK with your user and environment settings:
 
 ```swift
-let config = WINRConfiguration(
+let config = AvafliConfiguration(
     apiKey: "winr_live_xxxxxxxxxx",
     environment: .production,  // optional — defaults to .production (2.8.0+)
     bundleId: "com.example.myapp",
-    user: WINRUser(
+    user: AvafliUser(
         id: "user_abc123",
         firstName: "Jane",
         lastName: "Doe",
         phone: "+15551234567"  // optional
     ),
-    options: WINROptions(
+    options: AvafliOptions(
         logging: .info,
         analyticsAdapter: myAnalyticsAdapter,
         enablePushReminders: true
     )
 )
 
-WINR.configure(config)
+Avafli.configure(config)
 ```
 
-### WINRConfiguration
+### AvafliConfiguration
 
 | Parameter | Type | Required | Description |
 | --------- | ---- | -------- | ----------- |
-| `apiKey` | `String` | ✅ | Your WINR API key from the dashboard |
-| `environment` | `WINREnvironment` | ✅ | `.production` (the only environment) |
+| `apiKey` | `String` | ✅ | Your Avafli API key from the dashboard |
+| `environment` | `AvafliEnvironment` | ✅ | `.production` (the only environment) |
 | `bundleId` | `String` | ✅ | App bundle ID (e.g., com.example.myapp) |
-| `user` | `WINRUser` | ✅ | The authenticated user |
-| `options` | `WINROptions?` | — | Optional behavior toggles |
+| `user` | `AvafliUser` | ✅ | The authenticated user |
+| `options` | `AvafliOptions?` | — | Optional behavior toggles |
 
-### WINROptions
+### AvafliOptions
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
@@ -176,7 +189,7 @@ WINR.configure(config)
 | `analyticsAdapter` | `AnalyticsAdapter?` | `ConsoleAnalyticsAdapter()` | Routes SDK events to your analytics stack |
 | `enablePushReminders` | `Bool` | `true` | Enables streak reminder push notifications |
 
-### WINRUser
+### AvafliUser
 
 | Parameter | Type | Required | Description |
 | --------- | ---- | -------- | ----------- |
@@ -227,21 +240,21 @@ Drive re-engagement with daily streak reminders. The SDK handles permission and 
 ### 1. Register for Notifications
 
 ```swift
-// After WINR.configure() — requests permission and registers for APNs.
-// No-op if WINROptions.enablePushReminders is false.
-WINR.registerForPushNotifications()
+// After Avafli.configure() — requests permission and registers for APNs.
+// No-op if AvafliOptions.enablePushReminders is false.
+Avafli.registerForPushNotifications()
 ```
 
 ### 2. Forward Tokens
 
 Server-sent reminders are delivered through Firebase Cloud Messaging using the
-Firebase service account your team uploads in the WINR publisher dashboard. If
+Firebase service account your team uploads in the Avafli publisher dashboard. If
 your app uses Firebase Messaging, forward the FCM registration token:
 
 ```swift
 // MessagingDelegate
 func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
-    if let fcmToken { WINR.didReceiveFCMToken(fcmToken) }
+    if let fcmToken { Avafli.didReceiveFCMToken(fcmToken) }
 }
 ```
 
@@ -252,14 +265,14 @@ func application(
     _ application: UIApplication,
     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
 ) {
-    WINR.didRegisterForRemoteNotifications(deviceToken: deviceToken)
+    Avafli.didRegisterForRemoteNotifications(deviceToken: deviceToken)
 }
 
 func application(
     _ application: UIApplication,
     didFailToRegisterForRemoteNotificationsWithError error: Error
 ) {
-    WINR.didFailToRegisterForRemoteNotifications(error: error)
+    Avafli.didFailToRegisterForRemoteNotifications(error: error)
 }
 ```
 
@@ -269,11 +282,11 @@ available (or notification permission is denied).
 
 ### 3. Upload Firebase Service Account Key
 
-Upload your Firebase service account key via the [WINR Dashboard](https://avafli-website.web.app/sdk/dashboard) — server-sent reminders go through your own Firebase project. Reminder schedules and messaging are configured server-side from the dashboard.
+Upload your Firebase service account key via the [Avafli Dashboard](https://avafli-website.web.app/sdk/dashboard) — server-sent reminders go through your own Firebase project. Reminder schedules and messaging are configured server-side from the dashboard.
 
 ## Customization
 
-The V2 experience is hardcoded to the WINR design; publishers customize exactly three things through the [WINR Dashboard](https://avafli-website.web.app/sdk/dashboard):
+The V2 experience is hardcoded to the Avafli design; publishers customize exactly three things through the [Avafli Dashboard](https://avafli-website.web.app/sdk/dashboard):
 
 - **Logo** — Shown in the drawer header
 - **Prize image** — Art for the dashboard prize card
@@ -285,7 +298,7 @@ Changes apply instantly across all app installations without requiring an app up
 
 ## Analytics
 
-Forward WINR events to your existing analytics stack:
+Forward Avafli events to your existing analytics stack:
 
 ```swift
 class MyAnalyticsAdapter: AnalyticsAdapter {
@@ -296,19 +309,19 @@ class MyAnalyticsAdapter: AnalyticsAdapter {
 }
 
 // Pass during configuration
-let options = WINROptions(
+let options = AvafliOptions(
     logging: .info,
     analyticsAdapter: MyAnalyticsAdapter(),
     enablePushReminders: true
 )
 ```
 
-**Events emitted by the SDK** (constants on `WINRAnalyticsEvent`):
-- `winr_registration` — Device/user registered with WINR
-- `winr_experience_opened` — The WINR experience opened (once-per-day auto-open)
-- `winr_experience_closed` — The WINR experience was dismissed
-- `winr_daily_entry_claimed` — Daily entries awarded (auto-claimed on open)
-- `winr_prize_won` — The user was selected as a winner
+**Events emitted by the SDK** (constants on `AvafliAnalyticsEvent`):
+- `avafli_registration` — Device/user registered with Avafli
+- `avafli_experience_opened` — The Avafli experience opened (once-per-day auto-open)
+- `avafli_experience_closed` — The Avafli experience was dismissed
+- `avafli_daily_entry_claimed` — Daily entries awarded (auto-claimed on open)
+- `avafli_prize_won` — The user was selected as a winner
 
 ## GDPR / CCPA
 
@@ -317,7 +330,7 @@ Handle erasure requests with `optOut()`:
 ```swift
 Task {
     do {
-        try await WINR.optOut()
+        try await Avafli.optOut()
         print("User opted out; data erased.")
     } catch {
         print("Opt-out failed: \(error)")
@@ -350,18 +363,18 @@ The person is erased, the proof is kept.
 
 | Method | Returns | Description |
 | ------ | ------- | ----------- |
-| `WINR.configure(config)` | `Void` | Initialize the SDK; the experience auto-opens once per day |
-| `WINR.optOut()` | `async throws` | RTD opt-out — permanently silence the experience |
+| `Avafli.configure(config)` | `Void` | Initialize the SDK; the experience auto-opens once per day |
+| `Avafli.optOut()` | `async throws` | RTD opt-out — permanently silence the experience |
 
 ### Push Notifications
 
 | Method | Returns | Description |
 | ------ | ------- | ----------- |
-| `WINR.registerForPushNotifications()` | `Void` | Request permission and register for APNs |
-| `WINR.didRegisterForRemoteNotifications(deviceToken:)` | `Void` | Forward APNs token to WINR |
-| `WINR.didFailToRegisterForRemoteNotifications(error:)` | `Void` | Forward APNs registration failure to WINR |
+| `Avafli.registerForPushNotifications()` | `Void` | Request permission and register for APNs |
+| `Avafli.didRegisterForRemoteNotifications(deviceToken:)` | `Void` | Forward APNs token to Avafli |
+| `Avafli.didFailToRegisterForRemoteNotifications(error:)` | `Void` | Forward APNs registration failure to Avafli |
 
-For detailed API documentation, see the [WINR Docs](https://avafli-website.web.app/sdk/ios).
+For detailed API documentation, see the [Avafli Docs](https://avafli-website.web.app/sdk/ios).
 
 ## Links
 

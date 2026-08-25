@@ -1,4 +1,4 @@
-# WINR SDK — Code Examples
+# Avafli SDK — Code Examples
 
 Real-world integration examples for common use cases. See the [README](../README.md) for the canonical API overview.
 
@@ -9,22 +9,22 @@ Real-world integration examples for common use cases. See the [README](../README
 Configure once at launch — the experience auto-opens on the first app-open of each day and claims entries automatically:
 
 ```swift
-import WINRSDK
+import AvafliSDK
 
 // AppDelegate.swift
 func application(_ application: UIApplication,
                  didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-    let config = WINRConfiguration(
+    let config = AvafliConfiguration(
         apiKey: "YOUR_API_KEY",
         environment: .production,
         bundleId: Bundle.main.bundleIdentifier ?? "",
-        user: WINRUser(
+        user: AvafliUser(
             id: "user_123",
             firstName: "Jane",
             lastName: "Doe"
         )
     )
-    WINR.configure(config)
+    Avafli.configure(config)
     return true
 }
 ```
@@ -37,16 +37,16 @@ Uses `ConsoleAnalyticsAdapter` (logs to Xcode console) by default. Branding is s
 
 ```swift
 import SwiftUI
-import WINRSDK
+import AvafliSDK
 
 @main
 struct MyApp: App {
     init() {
-        WINR.configure(WINRConfiguration(
+        Avafli.configure(AvafliConfiguration(
             apiKey: "YOUR_API_KEY",
             environment: .production,
             bundleId: Bundle.main.bundleIdentifier ?? "",
-            user: WINRUser(id: "user_123", firstName: "Jane", lastName: "Doe")
+            user: AvafliUser(id: "user_123", firstName: "Jane", lastName: "Doe")
         ))
     }
 
@@ -65,26 +65,26 @@ The auto-open flow needs no further wiring — the experience opens itself once 
 ## 3. Push Notification Wiring
 
 ```swift
-import WINRSDK
+import AvafliSDK
 import FirebaseMessaging
 
-// After WINR.configure(...)
-WINR.registerForPushNotifications()
+// After Avafli.configure(...)
+Avafli.registerForPushNotifications()
 
 // AppDelegate
 func application(_ application: UIApplication,
                  didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-    WINR.didRegisterForRemoteNotifications(deviceToken: deviceToken)
+    Avafli.didRegisterForRemoteNotifications(deviceToken: deviceToken)
 }
 
 func application(_ application: UIApplication,
                  didFailToRegisterForRemoteNotificationsWithError error: Error) {
-    WINR.didFailToRegisterForRemoteNotifications(error: error)
+    Avafli.didFailToRegisterForRemoteNotifications(error: error)
 }
 
 // MessagingDelegate — required for server-sent reminders
 func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
-    if let fcmToken { WINR.didReceiveFCMToken(fcmToken) }
+    if let fcmToken { Avafli.didReceiveFCMToken(fcmToken) }
 }
 ```
 
@@ -95,7 +95,7 @@ Apps without Firebase Messaging still get a daily **local** streak reminder as a
 ## 4. Custom Analytics Adapter
 
 ```swift
-import WINRSDK
+import AvafliSDK
 
 final class SegmentAnalyticsAdapter: AnalyticsAdapter {
     func track(event: String, properties: [String: Any]?) {
@@ -103,21 +103,21 @@ final class SegmentAnalyticsAdapter: AnalyticsAdapter {
     }
 }
 
-let config = WINRConfiguration(
+let config = AvafliConfiguration(
     apiKey: "YOUR_API_KEY",
     environment: .production,
     bundleId: Bundle.main.bundleIdentifier ?? "",
-    user: WINRUser(id: "user_123", firstName: "Jane", lastName: "Doe"),
-    options: WINROptions(
+    user: AvafliUser(id: "user_123", firstName: "Jane", lastName: "Doe"),
+    options: AvafliOptions(
         logging: .info,
         analyticsAdapter: SegmentAnalyticsAdapter(),
         enablePushReminders: true
     )
 )
-WINR.configure(config)
+Avafli.configure(config)
 ```
 
-See the [event list](API_REFERENCE.md#winranalyticsevent) for everything the SDK emits.
+See the [event list](API_REFERENCE.md#avaflianalyticsevent) for everything the SDK emits.
 
 ---
 
@@ -131,8 +131,8 @@ and permanently silences the experience:
 ```swift
 Task {
     do {
-        try await WINR.optOut()
-        print("User opted out — data erased, WINR experience permanently silenced.")
+        try await Avafli.optOut()
+        print("User opted out — data erased, Avafli experience permanently silenced.")
     } catch {
         print("Opt-out failed: \(error)")
     }
@@ -148,5 +148,5 @@ Privacy Policy opens in an in-app webview from any legal link, and its
 ## 6. Environments
 
 ```swift
-let environment: WINREnvironment = .production  // production-only
+let environment: AvafliEnvironment = .production  // production-only
 ```

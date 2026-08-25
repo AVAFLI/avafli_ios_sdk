@@ -1,6 +1,64 @@
 # Changelog
 
 
+## 3.0.0 — 2026-08-25
+
+**Brand rename: WINR → Avafli.** No behavioral changes — 3.0.0 is 2.9.5
+with every public and internal type, file, module, and install coordinate
+renamed to the Avafli brand. The major bump exists because every public
+symbol changed name.
+
+### Migration (one screen)
+
+Update your install coordinates, then let the compiler walk you through
+the renames — every one is mechanical (`WINR` prefix → `Avafli`):
+
+| 2.9.x (old) | 3.0.0 (new) |
+|---|---|
+| `pod 'WINRSDK'` | `pod 'AvafliSDK'` |
+| SPM `https://github.com/AVAFLI/winr_ios_sdk.git` | SPM `https://github.com/AVAFLI/avafli_ios_sdk.git` |
+| `import WINRSDK` | `import AvafliSDK` |
+| `WINR.configure(config)` | `Avafli.configure(config)` |
+| `WINR` (static entry point: `demoWipeIdentity`, `didReceiveFCMToken`, `registerForPushNotifications`, …) | `Avafli` |
+| `WINRConfiguration` | `AvafliConfiguration` |
+| `WINRUser` (incl. `.guest`) | `AvafliUser` (incl. `.guest`) |
+| `WINROptions` | `AvafliOptions` |
+| `WINREnvironment` | `AvafliEnvironment` |
+| `WINRError` | `AvafliError` |
+| `WINRConstants` (`sdkVersion` now `"3.0.0"`) | `AvafliConstants` |
+| `WINRBranding` | `AvafliBranding` |
+| `WINRLogo` | `AvafliLogo` |
+| `WINRAnalyticsEvent` | `AvafliAnalyticsEvent` |
+| analytics event names `winr_registration`, `winr_experience_opened`, `winr_experience_closed`, `winr_daily_entry_claimed`, `winr_bonus_entry_claimed`, `winr_streak_milestone`, `winr_prize_won`, `winr_badge_earned`, `winr_winner_claim_shown`, `winr_prize_claim_submitted` | same names with the `avafli_` prefix |
+| share-link UTM `utm_medium=winr_share` | `utm_medium=avafli_share` |
+| guest id prefix `winr_guest_…` (new mints) | `avafli_guest_…` — an id already persisted by 2.9.x keeps its `winr_guest_` value; stored ids are NOT rewritten |
+
+`LoggingLevel`, `AnalyticsAdapter`, `PushNotificationManager`, and every
+other unprefixed public type are unchanged. The analytics/UTM/guest wire
+renames land in 3.0.0 across all platform SDKs (iOS, Android, web) — the
+backend neither validates nor aggregates these values, and 3.0 is the one
+breaking-change window. Update any downstream dashboards or funnels that
+filter on the old `winr_*` event names.
+
+### What deliberately did NOT change
+
+- **Persistence keys** (keychain service `com.winr.sdk`, `winr_*`
+  keychain/UserDefaults keys such as `winr_guest_id` and
+  `winr_marketing_consent`): upgrading from 2.9.x keeps the user's
+  identity, streak, and tokens. Stored values — including an existing
+  `winr_guest_…` id — are not rewritten.
+- **Legal URLs** stay on `winrmedia.com` (domain migration is a separate
+  later step). The privacy webview's delete bridge now intercepts BOTH
+  `winr://delete` (what the live privacy page emits) and `avafli://delete`
+  (future-proofing).
+- **API key formats** (`winr_live_…` / `winr_test_…`) are unchanged.
+
+### Upgrade policy
+
+2.9.x remains fully functional against the same backend but is frozen —
+no further releases on the WINRSDK coordinates. All future work ships as
+AvafliSDK 3.x.
+
 ## 2.9.5 — 2026-08-18
 
 - **Removed the redundant Privacy choices link from How-it-works** — the

@@ -1,10 +1,10 @@
-# WINR SDK — Getting Started Guide
+# Avafli SDK — Getting Started Guide
 
 ## Overview
 
-WINR SDK enables app publishers to instantly add sweepstakes and prizing functionality to their iOS apps. Users earn daily entries on a simple +10-per-day streak ladder, claimed automatically when the drawer opens. The SDK handles device registration, token management, email capture (with explicit marketing consent and a publisher-configurable age gate), streak tracking, and entry submission behind a fully managed UI.
+Avafli SDK enables app publishers to instantly add sweepstakes and prizing functionality to their iOS apps. Users earn daily entries on a simple +10-per-day streak ladder, claimed automatically when the drawer opens. The SDK handles device registration, token management, email capture (with explicit marketing consent and a publisher-configurable age gate), streak tracking, and entry submission behind a fully managed UI.
 
-The V2 experience is a bottom drawer that opens itself on the first app-open of each day, claims the user's daily entries automatically, and celebrates the result. You integrate once; prize configuration and branding are managed server-side from the WINR dashboard.
+The V2 experience is a bottom drawer that opens itself on the first app-open of each day, claims the user's daily entries automatically, and celebrates the result. You integrate once; prize configuration and branding are managed server-side from the Avafli dashboard.
 
 > This guide is a condensed walkthrough. The [README](../README.md) is the canonical reference for the current API surface.
 
@@ -30,16 +30,16 @@ The SDK uses SwiftUI for its presentation layer and requires a UIKit host app (U
 1. In Xcode, go to **File → Add Package Dependencies**
 2. Enter the repository URL:
    ```
-   https://github.com/AVAFLI/winr_ios_sdk.git
+   https://github.com/AVAFLI/avafli_ios_sdk.git
    ```
-3. Set the dependency rule to **Up to Next Major Version** from `2.9.5`
-4. Add the `WINRSDK` library to your app target
+3. Set the dependency rule to **Up to Next Major Version** from `3.0.0`
+4. Add the `AvafliSDK` library to your app target
 
 Or in `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/AVAFLI/winr_ios_sdk.git", from: "2.9.5")
+    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.0.0")
 ]
 ```
 
@@ -48,7 +48,7 @@ dependencies: [
 Add the pod to your `Podfile` and install:
 
 ```ruby
-pod 'WINRSDK', '~> 2.9'
+pod 'AvafliSDK', '~> 3.0'
 ```
 
 ```bash
@@ -59,21 +59,21 @@ pod install
 
 ## Configure the SDK
 
-Call `WINR.configure(_:)` once at app launch:
+Call `Avafli.configure(_:)` once at app launch:
 
 ```swift
-import WINRSDK
+import AvafliSDK
 
-let config = WINRConfiguration(
+let config = AvafliConfiguration(
     apiKey: "YOUR_API_KEY",
     bundleId: "com.example.myapp",
-    user: WINRUser(
+    user: AvafliUser(
         id: "user_123",
         firstName: "Jane",
         lastName: "Doe"
     )
 )
-WINR.configure(config)
+Avafli.configure(config)
 ```
 
 That's it. Configuration registers the device in the background and fetches the active giveaway. The experience then **auto-opens once per calendar day** — on launch and whenever the app returns to the foreground on a new day. Entries are claimed automatically when the drawer opens.
@@ -86,10 +86,10 @@ Auto-open behavior:
 
 The auto-open is the only way the experience appears — there is no manual launch API. One call, and the experience opens itself once per day.
 
-> **Email:** If your app has an authenticated session, pass the user's email via `WINRUser(email:)`. The capture screen then shows that address pre-filled and **locked** (read-only) — WINR links accounts across devices by email, so a partner-authenticated address is the most reliable identity. Consent remains an explicit act inside the WINR flow: the user still sees the address, ticks the age (and optionally marketing) boxes, and submits. A malformed email is ignored and the field stays editable. If your app has no signed-in user, pass `WINRUser.guest` — the SDK mints a stable per-install guest id and captures email through its own consent UI.
+> **Email:** If your app has an authenticated session, pass the user's email via `AvafliUser(email:)`. The capture screen then shows that address pre-filled and **locked** (read-only) — Avafli links accounts across devices by email, so a partner-authenticated address is the most reliable identity. Consent remains an explicit act inside the Avafli flow: the user still sees the address, ticks the age (and optionally marketing) boxes, and submits. A malformed email is ignored and the field stays editable. If your app has no signed-in user, pass `AvafliUser.guest` — the SDK mints a stable per-install guest id and captures email through its own consent UI.
 >
 > Two email safeguards run inside that flow, no integration needed: typing an
-> address that already belongs to an existing WINR account requires a 6-digit
+> address that already belongs to an existing Avafli account requires a 6-digit
 > code before the streak merges to this device (fresh signups and pre-filled
 > partner emails skip it), and a brand-new typed address gets a soft "verify
 > your email" chip on the dashboard — it never blocks daily play, only
@@ -110,7 +110,7 @@ IDs work with both keys.
 The SDK can nudge users to keep their streak alive. After configuring:
 
 ```swift
-WINR.registerForPushNotifications()  // no-op if WINROptions.enablePushReminders is false
+Avafli.registerForPushNotifications()  // no-op if AvafliOptions.enablePushReminders is false
 ```
 
 Forward the APNs callbacks from your `AppDelegate`:
@@ -118,21 +118,21 @@ Forward the APNs callbacks from your `AppDelegate`:
 ```swift
 func application(_ application: UIApplication,
                  didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-    WINR.didRegisterForRemoteNotifications(deviceToken: deviceToken)
+    Avafli.didRegisterForRemoteNotifications(deviceToken: deviceToken)
 }
 
 func application(_ application: UIApplication,
                  didFailToRegisterForRemoteNotificationsWithError error: Error) {
-    WINR.didFailToRegisterForRemoteNotifications(error: error)
+    Avafli.didFailToRegisterForRemoteNotifications(error: error)
 }
 ```
 
-If your app uses Firebase Messaging, also forward the FCM registration token so WINR's backend can send server-driven reminders through your Firebase project:
+If your app uses Firebase Messaging, also forward the FCM registration token so Avafli's backend can send server-driven reminders through your Firebase project:
 
 ```swift
 // MessagingDelegate
 func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
-    if let fcmToken { WINR.didReceiveFCMToken(fcmToken) }
+    if let fcmToken { Avafli.didReceiveFCMToken(fcmToken) }
 }
 ```
 
@@ -142,19 +142,19 @@ Without an FCM token (or if notification permission is denied), the SDK falls ba
 
 ## Branding
 
-The V2 experience is server-driven: logo, prize image, and primary accent color are configured in the [WINR Dashboard](https://avafli-website.web.app/sdk/dashboard) and update without an app release. There is nothing to configure in code.
+The V2 experience is server-driven: logo, prize image, and primary accent color are configured in the [Avafli Dashboard](https://avafli-website.web.app/sdk/dashboard) and update without an app release. There is nothing to configure in code.
 
 ---
 
 ## Analytics
 
-Route SDK events to your analytics stack by passing an `AnalyticsAdapter` in `WINROptions` — see [CODE_EXAMPLES.md](CODE_EXAMPLES.md) and the [README's Analytics section](../README.md#analytics) for the event list.
+Route SDK events to your analytics stack by passing an `AnalyticsAdapter` in `AvafliOptions` — see [CODE_EXAMPLES.md](CODE_EXAMPLES.md) and the [README's Analytics section](../README.md#analytics) for the event list.
 
 ---
 
 ## Privacy (GDPR / CCPA)
 
-- `try await WINR.optOut()` — Right-to-Delete opt-out: tombstones the person on the backend (identity-wide, PII scrubbed, survives reinstall) and permanently silences the experience on this device. Wire this to the opt-out action in your privacy-policy flow if you have one.
+- `try await Avafli.optOut()` — Right-to-Delete opt-out: tombstones the person on the backend (identity-wide, PII scrubbed, survives reinstall) and permanently silences the experience on this device. Wire this to the opt-out action in your privacy-policy flow if you have one.
 - Users can also delete their own data in-experience: the Privacy Policy — which every legal link (Official Rules • Privacy Policy rows, capture-screen links) opens in an in-app webview — contains a **Delete my data & stop participating** section that confirms and performs the same opt-out.
 - `optOut()` is the only erasure API — there is no hard-delete of entry records, which would leave no tombstone and enable same-day entry farming.
 

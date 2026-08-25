@@ -1,26 +1,26 @@
-# WINR SDK — API Reference
+# Avafli SDK — API Reference
 
 The [README](../README.md) is the canonical overview of the SDK; this page documents every public symbol in v2.
 
 ## Table of Contents
 
-- [WINR (Static API)](#winr-static-api)
-- [WINRConfiguration](#winrconfiguration)
-- [WINROptions](#winroptions)
-- [WINREnvironment](#winrenvironment)
-- [WINRUser](#winruser)
-- [WINRError](#winrerror)
+- [Avafli (Static API)](#avafli-static-api)
+- [AvafliConfiguration](#avafliconfiguration)
+- [AvafliOptions](#avaflioptions)
+- [AvafliEnvironment](#avaflienvironment)
+- [AvafliUser](#avafliuser)
+- [AvafliError](#avaflierror)
 - [DailyEntryGrant](#dailyentrygrant)
 - [AnalyticsAdapter](#analyticsadapter)
-- [WINRAnalyticsEvent](#winranalyticsevent)
-- [WINRConstants](#winrconstants)
+- [AvafliAnalyticsEvent](#avaflianalyticsevent)
+- [AvafliConstants](#avafliconstants)
 
 ---
 
-## WINR (Static API)
+## Avafli (Static API)
 
 ```swift
-public enum WINR
+public enum Avafli
 ```
 
 The primary entry point for the SDK. All methods are static.
@@ -28,7 +28,7 @@ The primary entry point for the SDK. All methods are static.
 ### `configure(_:)`
 
 ```swift
-public static func configure(_ configuration: WINRConfiguration)
+public static func configure(_ configuration: AvafliConfiguration)
 ```
 
 The single entry point — call once at app launch. Stores the configuration, sets the logging level, registers the device in the background, and fetches the active giveaway. After registration completes (and on each app foreground), the SDK presents the experience automatically at most once per calendar day — this is the only way the experience appears; there is no manual launch API. Auto-open can be disabled remotely via the dashboard; unregistered users see at most 3 auto-opens; opted-out users never see it.
@@ -43,7 +43,7 @@ public static func optOut() async throws
 
 Right-to-Delete opt-out: tombstones the person on the backend (identity-wide, PII anonymized, email suppressed) and permanently silences the experience on this device. Wire this to the opt-out action in your privacy-policy flow.
 
-**Throws:** `WINRError.notConfigured`, `WINRError.authenticationRequired`.
+**Throws:** `AvafliError.notConfigured`, `AvafliError.authenticationRequired`.
 
 `optOut()` is the only erasure API — there is no hard-delete method. Users can
 also invoke it themselves in-app: the Privacy Policy (every legal link opens it
@@ -58,7 +58,7 @@ that confirms and runs the same opt-out.
 public static func registerForPushNotifications()
 ```
 
-Requests notification permission and registers for APNs. No-op if `WINROptions.enablePushReminders` is `false`.
+Requests notification permission and registers for APNs. No-op if `AvafliOptions.enablePushReminders` is `false`.
 
 ```swift
 public static func didRegisterForRemoteNotifications(deviceToken: Data)
@@ -70,7 +70,7 @@ Forward the APNs token from `application(_:didRegisterForRemoteNotificationsWith
 public static func didReceiveFCMToken(_ token: String)
 ```
 
-Forward the Firebase Messaging registration token from `MessagingDelegate.messaging(_:didReceiveRegistrationToken:)` so WINR's backend can send streak reminders through your Firebase project. Without it the SDK falls back to local reminders.
+Forward the Firebase Messaging registration token from `MessagingDelegate.messaging(_:didReceiveRegistrationToken:)` so Avafli's backend can send streak reminders through your Firebase project. Without it the SDK falls back to local reminders.
 
 ```swift
 public static func didFailToRegisterForRemoteNotifications(error: Error)
@@ -80,34 +80,34 @@ Forward the APNs failure from `application(_:didFailToRegisterForRemoteNotificat
 
 ---
 
-## WINRConfiguration
+## AvafliConfiguration
 
 ```swift
-public struct WINRConfiguration {
+public struct AvafliConfiguration {
     public init(
         apiKey: String,
-        environment: WINREnvironment = .production,
+        environment: AvafliEnvironment = .production,
         bundleId: String,
-        user: WINRUser,
-        options: WINROptions = .init()
+        user: AvafliUser,
+        options: AvafliOptions = .init()
     )
 }
 ```
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `apiKey` | `String` | ✅ | Your WINR API key from the dashboard |
-| `environment` | `WINREnvironment` | ✅ | `.production` (the only environment) |
+| `apiKey` | `String` | ✅ | Your Avafli API key from the dashboard |
+| `environment` | `AvafliEnvironment` | ✅ | `.production` (the only environment) |
 | `bundleId` | `String` | ✅ | App bundle ID (e.g. `com.example.myapp`) |
-| `user` | `WINRUser` | ✅ | The authenticated user |
-| `options` | `WINROptions` | — | Optional behavior toggles |
+| `user` | `AvafliUser` | ✅ | The authenticated user |
+| `options` | `AvafliOptions` | — | Optional behavior toggles |
 
 ---
 
-## WINROptions
+## AvafliOptions
 
 ```swift
-public struct WINROptions {
+public struct AvafliOptions {
     public init(
         logging: LoggingLevel = .error,
         analyticsAdapter: AnalyticsAdapter? = ConsoleAnalyticsAdapter(),
@@ -124,10 +124,10 @@ public struct WINROptions {
 
 ---
 
-## WINREnvironment
+## AvafliEnvironment
 
 ```swift
-public enum WINREnvironment {
+public enum AvafliEnvironment {
     case production
 }
 ```
@@ -136,10 +136,10 @@ Production-only — there is no staging or QA backend.
 
 ---
 
-## WINRUser
+## AvafliUser
 
 ```swift
-public struct WINRUser {
+public struct AvafliUser {
     public init(
         id: String,
         firstName: String = "",
@@ -149,8 +149,8 @@ public struct WINRUser {
     )
 
     /// A guest session — the person is not signed in to your app (or your app
-    /// has no accounts). The SDK mints a stable per-install `winr_guest_…` id.
-    public static let guest: WINRUser
+    /// has no accounts). The SDK mints a stable per-install `avafli_guest_…` id.
+    public static let guest: AvafliUser
 }
 ```
 
@@ -167,16 +167,16 @@ Pass whatever identity you already hold — even just an id.
 | `email` | `String?` | — | From your authenticated session. If passed, it pre-fills and **locks** the capture field; if omitted, the SDK captures it. A plain `String`. |
 
 > **Email:** A supplied `email` never records consent — the user still ticks
-> the age (and optionally marketing) boxes and submits inside the WINR flow. A
+> the age (and optionally marketing) boxes and submits inside the Avafli flow. A
 > malformed value is ignored and the field stays editable. For apps with no
-> signed-in user, use `WINRUser.guest`.
+> signed-in user, use `AvafliUser.guest`.
 
 ---
 
-## WINRError
+## AvafliError
 
 ```swift
-public enum WINRError: Error {
+public enum AvafliError: Error {
     case notConfigured
     case noPresentingViewController
     case network(Error)
@@ -219,31 +219,31 @@ public protocol AnalyticsAdapter {
 }
 ```
 
-Implement to route WINR events to your analytics backend (Firebase Analytics, Amplitude, Mixpanel, …). The SDK ships with `ConsoleAnalyticsAdapter` (logs to the Xcode console) as the default.
+Implement to route Avafli events to your analytics backend (Firebase Analytics, Amplitude, Mixpanel, …). The SDK ships with `ConsoleAnalyticsAdapter` (logs to the Xcode console) as the default.
 
 Convenience helpers are provided as protocol extensions: `trackRegistration(userId:)`, `trackExperienceOpened(giveawayId:)`, `trackExperienceClosed(giveawayId:)`, `trackDailyEntryClaimed(day:entries:)`, `trackPrizeWon(prizeName:prizeValue:)`.
 
 ---
 
-## WINRAnalyticsEvent
+## AvafliAnalyticsEvent
 
 Event-name constants emitted by the SDK:
 
 | Constant | Event name | When |
 |----------|------------|------|
-| `registration` | `winr_registration` | Device/user registered with WINR |
-| `experienceOpened` | `winr_experience_opened` | The experience opened (once-per-day auto-open) |
-| `experienceClosed` | `winr_experience_closed` | The experience was dismissed |
-| `dailyEntryClaimed` | `winr_daily_entry_claimed` | Daily entries awarded (auto-claimed on open) |
-| `prizeWon` | `winr_prize_won` | The user was selected as a winner |
+| `registration` | `avafli_registration` | Device/user registered with Avafli |
+| `experienceOpened` | `avafli_experience_opened` | The experience opened (once-per-day auto-open) |
+| `experienceClosed` | `avafli_experience_closed` | The experience was dismissed |
+| `dailyEntryClaimed` | `avafli_daily_entry_claimed` | Daily entries awarded (auto-claimed on open) |
+| `prizeWon` | `avafli_prize_won` | The user was selected as a winner |
 
 ---
 
-## WINRConstants
+## AvafliConstants
 
 ```swift
-public enum WINRConstants {
-    public static let sdkVersion = "2.9.5"
+public enum AvafliConstants {
+    public static let sdkVersion = "3.0.0"
     public static let platformOS = "iOS"
 }
 ```
