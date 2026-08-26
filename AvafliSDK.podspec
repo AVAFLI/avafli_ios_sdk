@@ -10,7 +10,7 @@ Pod::Spec.new do |s|
     claims entries automatically.
   DESC
 
-  s.homepage         = 'https://avafli-website.web.app'
+  s.homepage         = 'https://avafli.com'
   s.license          = { :type => 'MIT', :file => 'LICENSE' }
   s.author           = { 'Avafli' => 'team@avafli.com' }
   s.source           = { :git => 'https://github.com/AVAFLI/avafli_ios_sdk.git', :tag => "v#{s.version}" }

@@ -45,6 +45,8 @@ dependencies: [
 
 ### CocoaPods
 
+> **Note:** Publishing to CocoaPods trunk is in progress — use Swift Package Manager today.
+
 Add the pod to your `Podfile` and install:
 
 ```ruby
@@ -142,7 +144,7 @@ Without an FCM token (or if notification permission is denied), the SDK falls ba
 
 ## Branding
 
-The V2 experience is server-driven: logo, prize image, and primary accent color are configured in the [Avafli Dashboard](https://avafli-website.web.app/sdk/dashboard) and update without an app release. There is nothing to configure in code.
+The V2 experience is server-driven: logo, prize image, and primary accent color are configured in the [Avafli Dashboard](https://sdk.avafli.com/dashboard) and update without an app release. There is nothing to configure in code.
 
 ---
 

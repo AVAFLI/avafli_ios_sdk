@@ -119,6 +119,8 @@ dependencies: [
 
 ### CocoaPods
 
+> **Note:** Publishing to CocoaPods trunk is in progress — use Swift Package Manager today.
+
 Add the pod to your `Podfile`:
 
 ```ruby
@@ -131,7 +133,7 @@ Then run:
 pod install
 ```
 
-> **Note:** Contact [AVAFLI](https://avafli-website.web.app/sdk/pricing) to obtain an API key.
+> **Note:** Contact [AVAFLI](https://sdk.avafli.com/pricing) to obtain an API key.
 
 ### Migrating from WINR SDK 2.x
 
@@ -282,11 +284,11 @@ available (or notification permission is denied).
 
 ### 3. Upload Firebase Service Account Key
 
-Upload your Firebase service account key via the [Avafli Dashboard](https://avafli-website.web.app/sdk/dashboard) — server-sent reminders go through your own Firebase project. Reminder schedules and messaging are configured server-side from the dashboard.
+Upload your Firebase service account key via the [Avafli Dashboard](https://sdk.avafli.com/dashboard) — server-sent reminders go through your own Firebase project. Reminder schedules and messaging are configured server-side from the dashboard.
 
 ## Customization
 
-The V2 experience is hardcoded to the Avafli design; publishers customize exactly three things through the [Avafli Dashboard](https://avafli-website.web.app/sdk/dashboard):
+The V2 experience is hardcoded to the Avafli design; publishers customize exactly three things through the [Avafli Dashboard](https://sdk.avafli.com/dashboard):
 
 - **Logo** — Shown in the drawer header
 - **Prize image** — Art for the dashboard prize card
@@ -374,12 +376,12 @@ The person is erased, the proof is kept.
 | `Avafli.didRegisterForRemoteNotifications(deviceToken:)` | `Void` | Forward APNs token to Avafli |
 | `Avafli.didFailToRegisterForRemoteNotifications(error:)` | `Void` | Forward APNs registration failure to Avafli |
 
-For detailed API documentation, see the [Avafli Docs](https://avafli-website.web.app/sdk/ios).
+For detailed API documentation, see the [Avafli Docs](https://sdk.avafli.com/ios).
 
 ## Links
 
-- **Dashboard:** [https://avafli-website.web.app/sdk/dashboard](https://avafli-website.web.app/sdk/dashboard)
-- **Documentation:** [https://avafli-website.web.app/sdk/ios](https://avafli-website.web.app/sdk/ios)
+- **Dashboard:** [https://sdk.avafli.com/dashboard](https://sdk.avafli.com/dashboard)
+- **Documentation:** [https://sdk.avafli.com/ios](https://sdk.avafli.com/ios)
 - **Support:** [info@avafli.com](mailto:info@avafli.com)
 
 ---
