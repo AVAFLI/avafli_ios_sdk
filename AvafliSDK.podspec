@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'AvafliSDK'
-  s.version          = '3.0.0'
+  s.version          = '3.0.1'
   s.summary          = 'Sweepstakes-as-a-Service SDK for iOS apps'
   s.description      = <<-DESC
     Avafli SDK enables app publishers to instantly add sweepstakes and prizing
@@ -22,5 +22,5 @@ Pod::Spec.new do |s|
   s.resources        = 'AvafliSDK/Resources/**/*'
   # NOTE: CommonCrypto is a system MODULE (`import CommonCrypto`), not a
   # linkable framework — declaring it in s.frameworks fails the link step.
-  s.frameworks       = 'UIKit', 'SwiftUI', 'Security', 'AdSupport', 'AppTrackingTransparency'
+  s.frameworks       = 'UIKit', 'SwiftUI', 'Security'
 end

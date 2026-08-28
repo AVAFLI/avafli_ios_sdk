@@ -4,7 +4,7 @@
 [![Platform](https://img.shields.io/badge/platform-iOS%2015.0%2B-blue.svg)](https://developer.apple.com/ios/)
 [![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange.svg)](https://swift.org)
 [![SPM](https://img.shields.io/badge/SPM-compatible-brightgreen.svg)](https://swift.org/package-manager/)
-[![CocoaPods](https://img.shields.io/badge/CocoaPods-3.0.0-red.svg)](https://cocoapods.org/pods/AvafliSDK)
+[![CocoaPods](https://img.shields.io/badge/CocoaPods-3.0.1-red.svg)](https://cocoapods.org/pods/AvafliSDK)
 
 ---
 
@@ -24,6 +24,7 @@ Avafli lets you add daily-entry sweepstakes and prize experiences to your app in
 - **Push reminders** — Drive re-engagement with daily nudges (FCM, with local fallback)
 - **Server-driven branding** — Logo, prize image, and primary color update without app releases
 - **GDPR/CCPA compliant** — Built-in consent flows plus an RTD opt-out (`optOut()`) users can reach themselves via **Delete my data & stop participating** inside the in-app Privacy Policy
+- **No ad tracking** — The SDK collects no advertising identifiers and never shows the App Tracking Transparency prompt
 - **Analytics forwarding** — Route SDK events to your existing analytics stack
 
 ## Quick Start
@@ -106,14 +107,14 @@ Avafli is distributed via **Swift Package Manager** and **CocoaPods**:
 
 1. **File → Add Package Dependencies…**
 2. Enter the repository URL: `https://github.com/AVAFLI/avafli_ios_sdk.git`
-3. Set dependency rule to **Up to Next Major Version** from `3.0.0`
+3. Set dependency rule to **Up to Next Major Version** from `3.0.1`
 4. Add the `AvafliSDK` library to your app target
 
 ### Package.swift
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.0.0")
+    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.0.1")
 ]
 ```
 

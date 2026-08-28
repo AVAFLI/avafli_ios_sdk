@@ -6,10 +6,6 @@
 //
 
 import UIKit
-import AdSupport
-#if canImport(AppTrackingTransparency)
-import AppTrackingTransparency
-#endif
 
 public enum Avafli {
     /// Internal (not private) so the demo-only extension can read it.
@@ -576,9 +572,6 @@ public enum Avafli {
             return
         }
 
-        // Collect IDFA if available
-        let maidId = await collectIDFA()
-        
         let network = makeNetworkClient(configuration: configuration, keychain: keychain)
 
         do {
@@ -593,7 +586,10 @@ public enum Avafli {
                 lastName: user.lastName,
                 phone: user.phone,
                 smsConsent: false,
-                maidId: maidId,
+                // Advertising-id collection removed Aug 2026: the SDK never shows the
+                // App Tracking Transparency prompt and collects no IDFA. The backend
+                // maid_id field remains for a future opt-in attribution feature.
+                maidId: nil,
                 publisherUserId: effectiveId
             )
             let _ = try await network.send(request)
@@ -601,25 +597,6 @@ public enum Avafli {
         } catch {
             Logger.shared.log("User profile submission failed: \(error)", level: .error)
         }
-    }
-
-    // MARK: - IDFA Collection
-
-    private static func collectIDFA() async -> String? {
-        if #available(iOS 14.5, *) {
-            #if canImport(AppTrackingTransparency)
-            let status = await ATTrackingManager.requestTrackingAuthorization()
-            if status == .authorized {
-                let idfa = await MainActor.run {
-                    ASIdentifierManager.shared().advertisingIdentifier.uuidString
-                }
-                if idfa != "00000000-0000-0000-0000-000000000000" {
-                    return idfa
-                }
-            }
-            #endif
-        }
-        return nil
     }
 
     // MARK: - Right-to-be-Forgotten (GDPR/CCPA)

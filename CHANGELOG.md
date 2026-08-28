@@ -1,6 +1,22 @@
 # Changelog
 
 
+## 3.0.1 — 2026-08-28
+
+### Removed
+
+- **IDFA collection and the App Tracking Transparency prompt.** The SDK no
+  longer imports AdSupport/AppTrackingTransparency, never requests tracking
+  authorization, and sends no advertising identifier. The backend `maid_id`
+  field remains optional-absent on the wire for a future opt-in attribution
+  feature.
+
+### Audited
+
+- **Streak accounting audit** — no data-flow changes needed on iOS; verified
+  correct.
+
+
 ## 3.0.0 — 2026-08-25
 
 **Brand rename: WINR → Avafli.** No behavioral changes — 3.0.0 is 2.9.5

@@ -156,6 +156,7 @@ Route SDK events to your analytics stack by passing an `AnalyticsAdapter` in `Av
 
 ## Privacy (GDPR / CCPA)
 
+- The SDK collects no advertising identifiers and never shows the App Tracking Transparency prompt.
 - `try await Avafli.optOut()` — Right-to-Delete opt-out: tombstones the person on the backend (identity-wide, PII scrubbed, survives reinstall) and permanently silences the experience on this device. Wire this to the opt-out action in your privacy-policy flow if you have one.
 - Users can also delete their own data in-experience: the Privacy Policy — which every legal link (Official Rules • Privacy Policy rows, capture-screen links) opens in an in-app webview — contains a **Delete my data & stop participating** section that confirms and performs the same opt-out.
 - `optOut()` is the only erasure API — there is no hard-delete of entry records, which would leave no tombstone and enable same-day entry farming.
