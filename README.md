@@ -120,7 +120,6 @@ dependencies: [
 
 ### CocoaPods
 
-> **Note:** Publishing to CocoaPods trunk is in progress — use Swift Package Manager today.
 
 Add the pod to your `Podfile`:
 
