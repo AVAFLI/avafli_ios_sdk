@@ -221,6 +221,7 @@ struct AvafliV2ExperienceRoot: View {
                     onInfo: { viewModel.showHowItWorks() },
                     onClose: { viewModel.requestDismiss() },
                     onWinnerTap: { showWinnerModal = true },
+                    showWinnerBanner: viewModel.sdkConfig?.experience?.winnerBannerEnabled == true,
                     showVerifyEmailChip: viewModel.emailUnverified,
                     onVerifyEmailTap: { viewModel.showEmailVerification() },
                     pendingClaimEntries: viewModel.pendingRevealGrant.map { $0.baseEntries + $0.bonusEntries },
@@ -820,6 +821,12 @@ struct AvafliV2DashboardView: View {
     let onInfo: () -> Void
     let onClose: () -> Void
     var onWinnerTap: (() -> Void)? = nil
+    /// "WE HAVE A WINNER!" banner gate — server flag
+    /// sdkConfig.experience.winnerBannerEnabled. DEFAULT OFF (absent/false =
+    /// hidden) so the GOT IT pill stays above the fold on small screens; the
+    /// banner (and the winners dialog behind its + button) only appears when
+    /// an admin turned the flag on AND the giveaway carries a latestWinner.
+    var showWinnerBanner: Bool = false
     /// Soft email-verification nudge: a persistent, dismissible chip pinned near
     /// the top of the dashboard while a freshly-typed email is unverified. Never
     /// blocks the streak content beneath it.
@@ -882,7 +889,7 @@ struct AvafliV2DashboardView: View {
                         AvafliV2VerifyEmailChip(accent: accent, onTap: onVerifyEmailTap)
                             .padding(.horizontal, 22)
                     }
-                    if giveaway?.latestWinner != nil, let onWinnerTap {
+                    if showWinnerBanner, giveaway?.latestWinner != nil, let onWinnerTap {
                         AvafliV2WinnerBanner(onTap: onWinnerTap)
                     }
                     AvafliV2PrizeCard(

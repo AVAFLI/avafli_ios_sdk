@@ -1,6 +1,27 @@
 # Changelog
 
 
+## 3.0.3 — 2026-09-01
+
+### Changed
+
+- **"WE HAVE A WINNER!" banner is now server-flag-gated and hidden by
+  default.** The dashboard shows the banner (and the winners dialog behind
+  its + button) only when the admin-set
+  `sdkConfig.experience.winnerBannerEnabled` flag is `true` AND the giveaway
+  carries a `latestWinner` — absent or `false` hides it (Aug 31 GTM decision:
+  keeps the GOT IT button above the fold on mobile). Same contract as the
+  web, Android, and Flutter SDKs.
+
+### Docs
+
+- README and docs now show the current API key prefixes
+  (`avafli_test_` / `avafli_live_`).
+- README and MONITORING.md rewritten in a plain professional tone; the
+  rename-era "Migrating from WINR SDK 2.x" section is removed (the 3.0.0
+  CHANGELOG entry keeps the migration table).
+
+
 ## 3.0.2 — 2026-08-31
 
 ### Changed

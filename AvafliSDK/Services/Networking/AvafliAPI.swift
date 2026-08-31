@@ -95,6 +95,11 @@ struct ExperienceConfig: Codable {
     let unregisteredImpressionCap: Int?
     /// Dismissal requires an explicit tap; never auto-fade (default true).
     let requireDismissClick: Bool?
+    /// Show the "WE HAVE A WINNER!" banner on the dashboard. DEFAULT OFF —
+    /// absent/false hides it (Aug 31 GTM decision: keeps the GOT IT button
+    /// above the fold on mobile). Admins enable it per publisher when there's
+    /// a winner worth showcasing.
+    let winnerBannerEnabled: Bool?
 }
 
 struct SDKBrandingConfig: Codable {
@@ -271,7 +276,9 @@ struct GiveawayConfig: Codable {
     /// "visit" = visit-count streak for low-frequency apps; never resets.
     let streakMode: String?
     /// Most recent drawn winner for this giveaway chain — drives the
-    /// "WE HAVE A WINNER!" banner + winners dialog. Absent → no banner.
+    /// "WE HAVE A WINNER!" banner + winners dialog. Absent → no banner. Since
+    /// the Aug 31 GTM decision the banner ALSO requires the admin-set
+    /// sdkConfig.experience.winnerBannerEnabled flag (default off).
     let latestWinner: GiveawayWinner?
 
     init(
