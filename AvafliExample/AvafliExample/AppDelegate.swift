@@ -22,7 +22,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // │                                                  │
         // │  Replace apiKey with the key from your           │
         // │  publisher dashboard at:                         │
-        // │  https://winrmedia.com/sdk/dashboard             │
+        // │  https://sdk.avafli.com/dashboard                │
         // │                                                  │
         // │  environment is production-only.                 │
         // │                                                  │

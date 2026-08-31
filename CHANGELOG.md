@@ -1,6 +1,17 @@
 # Changelog
 
 
+## 3.0.2 — 2026-08-31
+
+### Changed
+
+- **Legal pages now load from sdk.avafli.com; no winrmedia.com references
+  remain.** The hardcoded privacy policy URL is now
+  `https://sdk.avafli.com/sdk/privacy` (still loaded in-app with `?app=1`).
+  Official Rules URLs remain server-fed and are unaffected. The legacy
+  `winr://delete` bridge scheme is still accepted alongside `avafli://delete`.
+
+
 ## 3.0.1 — 2026-08-28
 
 ### Removed

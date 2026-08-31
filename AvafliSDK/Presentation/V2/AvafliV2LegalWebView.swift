@@ -4,7 +4,7 @@
 //
 //  In-experience legal pages (2.9.4): Official Rules and Privacy Policy render
 //  in an in-app WKWebView sheet instead of kicking the user out to Safari.
-//  The privacy policy loads with `?app=1`, which makes winrmedia.com/sdk/privacy
+//  The privacy policy loads with `?app=1`, which makes sdk.avafli.com/sdk/privacy
 //  render its delete-my-data section; tapping delete there navigates to
 //  `winr://delete`, which the SDK intercepts in the navigation delegate — no
 //  custom URL-scheme registration is required of the host app — and hands to
@@ -65,16 +65,16 @@ enum AvafliV2LegalRouting {
 /// What the webview does with an attempted navigation. The delete deep link is
 /// the ONLY native bridge: the privacy page (loaded with `?app=1`) navigates
 /// there when its delete section is used, and the SDK cancels the navigation
-/// and raises the existing opt-out confirmation. The live privacy page still
-/// emits `winr://delete`; `avafli://delete` is accepted too so the page can
-/// migrate schemes without an SDK release. Any other `winr://` / `avafli://`
+/// and raises the existing opt-out confirmation. Both `avafli://delete` and
+/// the legacy `winr://delete` are accepted, so the page can switch schemes
+/// without an SDK release. Any other `winr://` / `avafli://`
 /// navigation is cancelled quietly (nothing could load it anyway); everything
 /// else — including external links inside the legal pages — loads in the
 /// webview.
 enum AvafliV2LegalBridge {
-    /// Both bridge schemes are intercepted: the legacy `winr://` (what the
-    /// live winrmedia.com privacy page emits today) and `avafli://` (the
-    /// post-rebrand scheme).
+    /// Both bridge schemes are intercepted: the legacy `winr://` (harmless,
+    /// internal-only, kept so older page revisions keep working) and
+    /// `avafli://` (the post-rebrand scheme).
     private static let bridgeSchemes: Set<String> = ["winr", "avafli"]
 
     enum Decision: Equatable {

@@ -11,12 +11,12 @@ import SwiftUI
 public enum AvafliConstants {
     /// Single source of truth for the SDK version. MUST match `AvafliSDK.podspec`
     /// (`s.version`) and the latest CHANGELOG entry. Format: `v<major>.<minor>.<patch>`.
-    public static let sdkVersion = "3.0.1"
+    public static let sdkVersion = "3.0.2"
     public static let platformOS = "iOS"
-    
-    // Hardcoded legal URLs — consistent across all publishers
-    static let rulesURL = "https://winrmedia.com/sdk/rules"
-    static let privacyURL = "https://winrmedia.com/sdk/privacy"
+
+    // Hardcoded privacy policy URL — consistent across all publishers.
+    // (Official Rules URLs are server-fed per giveaway/config, never hardcoded.)
+    static let privacyURL = "https://sdk.avafli.com/sdk/privacy"
 }
 
 public struct AvafliConfiguration {
