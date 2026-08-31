@@ -100,7 +100,7 @@ The auto-open is the only way the experience appears — there is no manual laun
 
 ## Test with Your Sandbox Key
 
-Your dashboard shows a `winr_test_…` key alongside your live key. Use it in
+Your dashboard shows a `avafli_test_…` key alongside your live key. Use it in
 debug builds: same production backend, identical behavior, but users and
 entries land in an isolated sandbox tenant — testers can never enter your real
 giveaway, and sandbox usage never counts toward MAU. Your registered bundle

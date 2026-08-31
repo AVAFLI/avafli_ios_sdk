@@ -33,7 +33,7 @@ Avafli lets you add daily-entry sweepstakes and prize experiences to your app in
 import AvafliSDK
 
 let config = AvafliConfiguration(
-    apiKey: "YOUR_API_KEY",  // debug builds: use your winr_test_ sandbox key
+    apiKey: "YOUR_API_KEY",  // debug builds: use your avafli_test_ sandbox key
     bundleId: "com.example.myapp",
     user: AvafliUser(
         id: "user_123",             // only id is required — pass whatever identity you have
@@ -87,7 +87,7 @@ user: AvafliUser(id: "user_123", firstName: "Jane", lastName: "Doe", email: "jan
 
 ```swift
 Avafli.configure(AvafliConfiguration(
-    apiKey: "winr_live_…",
+    apiKey: "avafli_live_…",
     environment: .production,  // optional — defaults to .production (2.8.0+)
     bundleId: Bundle.main.bundleIdentifier!,
     user: .guest
@@ -135,26 +135,13 @@ pod install
 
 > **Note:** Contact [AVAFLI](https://sdk.avafli.com/pricing) to obtain an API key.
 
-### Migrating from WINR SDK 2.x
-
-3.0.0 is a pure brand rename — swap the install coordinates above
-(`pod 'WINRSDK'` → `pod 'AvafliSDK'`, old `winr_ios_sdk` SPM URL → this
-repository) and rename the `WINR` prefix to `Avafli` on every SDK symbol
-(`WINR.configure` → `Avafli.configure`, `WINRConfiguration` →
-`AvafliConfiguration`, …). Analytics event names, the share-link UTM
-medium, and newly minted guest ids also move from the `winr_` to the
-`avafli_` prefix — update any dashboards filtering on the old event names.
-Behavior, backend, and stored user state are unchanged; see the
-[CHANGELOG](CHANGELOG.md) for the full symbol and wire-name table. 2.9.x
-keeps working but is frozen.
-
 ## Configuration
 
 Initialize the SDK with your user and environment settings:
 
 ```swift
 let config = AvafliConfiguration(
-    apiKey: "winr_live_xxxxxxxxxx",
+    apiKey: "avafli_live_xxxxxxxxxx",
     environment: .production,  // optional — defaults to .production (2.8.0+)
     bundleId: "com.example.myapp",
     user: AvafliUser(
@@ -212,8 +199,8 @@ Your publisher dashboard shows two API keys:
 
 | Key | Use it in |
 | --- | --------- |
-| `winr_live_…` | Release builds — your real giveaway |
-| `winr_test_…` | Debug/dev builds and CI — an isolated sandbox |
+| `avafli_live_…` | Release builds — your real giveaway |
+| `avafli_test_…` | Debug/dev builds and CI — an isolated sandbox |
 
 The sandbox key hits the **same production backend** with identical behavior —
 registration, streaks, entries, the full experience — but every user and entry

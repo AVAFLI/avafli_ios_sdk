@@ -5,9 +5,8 @@ Pod::Spec.new do |s|
   s.description      = <<-DESC
     Avafli SDK enables app publishers to instantly add sweepstakes and prizing
     functionality with a few lines of code. Turnkey solution for daily entries,
-    streak rewards with milestone accelerators, winner announcements, and
-    first-party data capture. The V2 experience auto-opens once per day and
-    claims entries automatically.
+    streak rewards, winner announcements, and first-party data capture. The V2
+    experience auto-opens once per day and claims entries automatically.
   DESC
 
   s.homepage         = 'https://avafli.com'
