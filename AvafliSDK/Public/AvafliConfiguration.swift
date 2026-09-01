@@ -11,7 +11,7 @@ import SwiftUI
 public enum AvafliConstants {
     /// Single source of truth for the SDK version. MUST match `AvafliSDK.podspec`
     /// (`s.version`) and the latest CHANGELOG entry. Format: `v<major>.<minor>.<patch>`.
-    public static let sdkVersion = "3.0.3"
+    public static let sdkVersion = "3.1.0"
     public static let platformOS = "iOS"
 
     // Hardcoded privacy policy URL — consistent across all publishers.

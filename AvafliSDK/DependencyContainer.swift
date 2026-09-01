@@ -63,7 +63,12 @@ struct DependencyContainer {
             enablePinning: false,  // Disabled until pin rotation is automated
         )
         self.storage = UserDefaultsStorage()
-        self.analytics = configuration.options.analyticsAdapter
+        // Route publisher analytics through the offline buffering wrapper so
+        // events emitted while offline are queued (bounded, persisted) and
+        // flushed on reconnect with their original timestamps.
+        self.analytics = AvafliOfflineResilience.shared?
+            .analyticsAdapter(wrapping: configuration.options.analyticsAdapter)
+            ?? configuration.options.analyticsAdapter
         self.cachedGiveaway = nil
     }
 }

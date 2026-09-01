@@ -381,6 +381,26 @@ final class AvafliExperienceViewModel: ObservableObject {
         // network call resolves — then let load() reconcile silently.
         hydrateFromCache()
         Task { await load() }
+        // A background offline-claim retry landed while the drawer is open —
+        // reconcile through the existing load() refresh path (no new UI).
+        offlineRetryObserver = NotificationCenter.default.addObserver(
+            forName: AvafliOfflineResilience.claimRetrySucceededNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            if case .streak = self.state {
+                Task { await self.load() }
+            }
+        }
+    }
+
+    private var offlineRetryObserver: NSObjectProtocol?
+
+    deinit {
+        if let offlineRetryObserver {
+            NotificationCenter.default.removeObserver(offlineRetryObserver)
+        }
     }
 
     // MARK: - Cache-first render
@@ -1085,8 +1105,10 @@ final class AvafliExperienceViewModel: ObservableObject {
                 event: AvafliAnalyticsEvent.dailyEntryClaimed,
                 properties: ["day": response.streakDay, "entries": response.entries]
             )
+            Avafli.clearOfflineClaimRetry()
         } catch {
             Logger.shared.log("Day-1 claim after email submit failed (dashboard will retry): \(error)", level: .info)
+            Avafli.enqueueOfflineClaimRetry(for: error)
         }
     }
 
@@ -1166,6 +1188,7 @@ final class AvafliExperienceViewModel: ObservableObject {
                 if let lc = response.lifetimeCount { updatedStreak.lifetimeCount = lc }
                 try? container.storage.save(updatedStreak, for: streakStorageKey)
                 claimedToday = true
+                Avafli.clearOfflineClaimRetry()
 
                 // V2 auto-claim routing (Day 1 AND Day 2+, unified — the
                 // celebration modal is gone): the celebration already played at
@@ -1241,6 +1264,8 @@ final class AvafliExperienceViewModel: ObservableObject {
                     // state didn't know. Sync the claimed state and TELL the
                     // user — this rejection used to be swallowed silently.
                     Logger.shared.log("Already claimed today — syncing local state", level: .info)
+                    // The entry exists server-side — a queued retry is moot.
+                    Avafli.clearOfflineClaimRetry()
                     var updatedStreak = streak
                     updatedStreak.lastClaimedDate = Date()
                     try? container.storage.save(updatedStreak, for: streakStorageKey)
@@ -1293,6 +1318,11 @@ final class AvafliExperienceViewModel: ObservableObject {
                     // that does not exist. The dashboard shows the unclaimed
                     // state with a non-blocking notice and a retry affordance.
                     Logger.shared.log("Claim transport failure — showing retry notice: \(error)", level: .error)
+                    // Offline resilience: queue a same-day automatic retry
+                    // (connectivity regain / foreground / capped backoff) so a
+                    // transient drop can't cost the streak if the user closes
+                    // the drawer without tapping TRY AGAIN.
+                    Avafli.enqueueOfflineClaimRetry(for: error)
                     claimedToday = false
                     pendingRevealGrant = nil
                     preClaimTotalEntries = nil
@@ -1421,8 +1451,10 @@ final class AvafliExperienceViewModel: ObservableObject {
                     self.claimedToday = true
                 }
                 Logger.shared.log("Silent daily claim during winner flow: +\(response.entries)", level: .debug)
+                Avafli.clearOfflineClaimRetry()
             } catch {
                 Logger.shared.log("Silent daily claim declined during winner flow: \(error)", level: .debug)
+                Avafli.enqueueOfflineClaimRetry(for: error)
             }
         }
     }

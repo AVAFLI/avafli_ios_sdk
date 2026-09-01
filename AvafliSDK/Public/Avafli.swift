@@ -116,6 +116,15 @@ public enum Avafli {
         AvafliV2Font.registerIfNeeded()
         Logger.shared.level = configuration.options.logging
         Logger.shared.log("AvafliSDK configured for \(configuration.environment)")
+
+        // Offline resilience (launch item 15): connectivity monitor + persisted
+        // same-day retry queue + offline analytics buffering.
+        let offline = AvafliOfflineResilience.activate(bundleId: configuration.bundleId)
+        offline.coordinator.retryHandler = { kind in
+            await performOfflineRetry(kind)
+        }
+        // Next-launch flush of analytics buffered during a previous offline run.
+        offline.flushAnalyticsBuffer()
         Logger.shared.log(
             configuration.user.isGuest
                 ? "Avafli user set: guest session (stable guest id will be minted)"
@@ -127,6 +136,10 @@ public enum Avafli {
         registrationTask = Task {
             await registerDeviceIfNeeded(configuration: configuration)
             await MainActor.run { autoPresentIfEligible() }
+            // Launch trigger for the offline retry queue: a pending same-day
+            // claim persisted before a crash/kill retries now that the
+            // session is (re)established.
+            AvafliOfflineResilience.shared?.coordinator.noteLaunch()
         }
 
         // Auto-present on subsequent foregrounds too (covers the "app stayed in
@@ -140,6 +153,10 @@ public enum Avafli {
                 Task {
                     await registrationTask?.value
                     await MainActor.run { autoPresentIfEligible() }
+                    // Foreground trigger for the offline retry queue +
+                    // buffered-analytics flush.
+                    AvafliOfflineResilience.shared?.coordinator.noteForeground()
+                    AvafliOfflineResilience.shared?.flushAnalyticsBuffer()
                 }
             }
         }
@@ -419,11 +436,100 @@ public enum Avafli {
             prewarmPublisherArt()
 
             Logger.shared.log("Device registered: \(response.uuid)", level: .info)
+            AvafliOfflineResilience.shared?.coordinator.clear(.registration)
         } catch {
             handleSuspensionIfNeeded(error)
             Logger.shared.log("Device registration failed: \(error)", level: .error)
+            // NETWORK-class failure (offline/timeout): queue a same-day retry
+            // on connectivity regain / foreground / capped backoff. Backend
+            // rejections are NOT queued — they'd only be rejected again.
+            if AvafliNetworkErrorClassifier.isRetriable(error) {
+                AvafliOfflineResilience.shared?.coordinator.enqueue(.registration)
+            }
             // SDK gracefully degrades — will use cached data
         }
+    }
+
+    // MARK: - Offline retry execution
+
+    /// @internal — a claim transport failure in the experience. Queues a
+    /// same-day automatic retry when (and only when) it was a NETWORK-class
+    /// failure; backend rejections never queue.
+    static func enqueueOfflineClaimRetry(for error: Error) {
+        guard AvafliNetworkErrorClassifier.isRetriable(error) else { return }
+        AvafliOfflineResilience.shared?.coordinator.enqueue(.claim)
+    }
+
+    /// @internal — today's claim is definitively recorded on the backend;
+    /// drop any queued claim retry.
+    static func clearOfflineClaimRetry() {
+        AvafliOfflineResilience.shared?.coordinator.clear(.claim)
+    }
+
+    /// Executes one queued offline retry.
+    ///
+    /// Duplicate-claim safety (verified in the backend claim transaction):
+    /// `claimDailyEntries` dedups server-side by the canonical user's
+    /// local-day entry window and `daily_last_claimed === today`, throwing an
+    /// `already-exists` callable error — so a duplicate retry can never
+    /// double-grant, and an already-claimed rejection is treated as SUCCESS.
+    static func performOfflineRetry(_ kind: AvafliPendingIntent.Kind) async -> AvafliRetryOutcome {
+        guard let configuration = configuration else { return .retriableFailure }
+        switch kind {
+        case .registration:
+            await registerDeviceIfNeeded(configuration: configuration)
+            return KeychainStorage().loadToken() != nil ? .success : .retriableFailure
+
+        case .claim:
+            let keychain = KeychainStorage()
+            guard keychain.loadToken() != nil else {
+                // Registration has to land first — its own retry restores the
+                // session; keep the claim queued for the next trigger.
+                return .retriableFailure
+            }
+            let network = makeNetworkClient(configuration: configuration, keychain: keychain)
+            do {
+                let response = try await network.send(ClaimDailyEntriesRequest())
+                lock.lock()
+                cachedClaimedToday = true
+                cachedStreakDay = response.streakDay
+                lock.unlock()
+                // Publisher-facing analytics for the recovered claim (through
+                // the buffering wrapper, like every other emission).
+                let analytics = AvafliOfflineResilience.shared?
+                    .analyticsAdapter(wrapping: configuration.options.analyticsAdapter)
+                analytics?.track(
+                    event: AvafliAnalyticsEvent.dailyEntryClaimed,
+                    properties: ["day": response.streakDay, "entries": response.entries, "recovered_offline": true]
+                )
+                // An open experience reconciles via its existing load() path.
+                NotificationCenter.default.post(
+                    name: AvafliOfflineResilience.claimRetrySucceededNotification,
+                    object: nil
+                )
+                Logger.shared.log("Offline claim retry recorded today's entry (+\(response.entries))", level: .info)
+                return .success
+            } catch {
+                if Self.isAlreadyClaimedRejection(error) {
+                    // Server-side daily dedup already holds today's entry —
+                    // the original attempt (or another device) landed.
+                    lock.lock()
+                    cachedClaimedToday = true
+                    lock.unlock()
+                    Logger.shared.log("Offline claim retry: already claimed — treating as success", level: .info)
+                    return .success
+                }
+                return AvafliNetworkErrorClassifier.isRetriable(error) ? .retriableFailure : .permanentFailure
+            }
+        }
+    }
+
+    /// The backend's `already-exists` dedup messages: "Already claimed daily
+    /// entries today" / "Already claimed today" / "You've already entered
+    /// today on another device…".
+    static func isAlreadyClaimedRejection(_ error: Error) -> Bool {
+        let text = "\(error)".lowercased()
+        return text.contains("already claimed") || text.contains("already entered today")
     }
 
     /// Decodes the publisher's remote art (prize hero + logo) into the image

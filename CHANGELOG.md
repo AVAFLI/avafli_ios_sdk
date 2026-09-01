@@ -1,6 +1,27 @@
 # Changelog
 
 
+## 3.1.0 — 2026-09-01
+
+### Added
+
+- **Offline resilience: same-day automatic retry of registration/claims on
+  connectivity regain; offline analytics event buffering.** A NETWORK-class
+  failure (offline/timeout — never a backend rejection) of `registerDevice`
+  or `claimDailyEntries` now persists a pending intent and retries it
+  automatically on connectivity regain (`NWPathMonitor`), app foreground,
+  and a capped exponential backoff (hard max 5 attempts per session). The
+  intent is dropped when its local calendar day ends — cross-midnight
+  replay is deliberately out of scope (server-authoritative day windows).
+  Duplicate retries are safe: the backend dedups daily claims and an
+  "already claimed" answer is treated as success. Publisher analytics
+  events emitted while offline are buffered (bounded ring buffer of 100,
+  persisted) and flushed on reconnect / next launch carrying their
+  original timestamps (`original_timestamp` / `original_timestamp_ms`).
+  No new UI — an open experience reconciles through the existing refresh
+  path when a queued claim lands.
+
+
 ## 3.0.3 — 2026-09-01
 
 ### Changed
