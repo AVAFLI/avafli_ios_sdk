@@ -4,7 +4,7 @@
 [![Platform](https://img.shields.io/badge/platform-iOS%2015.0%2B-blue.svg)](https://developer.apple.com/ios/)
 [![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange.svg)](https://swift.org)
 [![SPM](https://img.shields.io/badge/SPM-compatible-brightgreen.svg)](https://swift.org/package-manager/)
-[![CocoaPods](https://img.shields.io/badge/CocoaPods-3.1.0-red.svg)](https://cocoapods.org/pods/AvafliSDK)
+[![CocoaPods](https://img.shields.io/badge/CocoaPods-3.1.1-red.svg)](https://cocoapods.org/pods/AvafliSDK)
 
 ---
 
@@ -58,7 +58,7 @@ Avafli.configure(config)
 
 ### Identity — pass what you have, the SDK captures the rest
 
-Only `id` is required. Construct a `AvafliUser` from whatever identity data you
+Only `id` is required. Construct an `AvafliUser` from whatever identity data you
 already hold — even just an id — and the SDK fills in the gaps: it captures the
 email through its own screen, and the name at prize-claim time if the user wins.
 There are three cases:
@@ -87,7 +87,7 @@ user: AvafliUser(id: "user_123", firstName: "Jane", lastName: "Doe", email: "jan
 
 ```swift
 Avafli.configure(AvafliConfiguration(
-    apiKey: "avafli_live_…",
+    apiKey: "YOUR_API_KEY",
     environment: .production,  // optional — defaults to .production (2.8.0+)
     bundleId: Bundle.main.bundleIdentifier!,
     user: .guest
@@ -107,14 +107,14 @@ Avafli is distributed via **Swift Package Manager** and **CocoaPods**:
 
 1. **File → Add Package Dependencies…**
 2. Enter the repository URL: `https://github.com/AVAFLI/avafli_ios_sdk.git`
-3. Set dependency rule to **Up to Next Major Version** from `3.1.0`
+3. Set dependency rule to **Up to Next Major Version** from `3.1.1`
 4. Add the `AvafliSDK` library to your app target
 
 ### Package.swift
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.1.0")
+    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.1.1")
 ]
 ```
 
@@ -165,7 +165,7 @@ Avafli.configure(config)
 | Parameter | Type | Required | Description |
 | --------- | ---- | -------- | ----------- |
 | `apiKey` | `String` | ✅ | Your Avafli API key from the dashboard |
-| `environment` | `AvafliEnvironment` | ✅ | `.production` (the only environment) |
+| `environment` | `AvafliEnvironment` | — | `.production` (default; the only environment) |
 | `bundleId` | `String` | ✅ | App bundle ID (e.g., com.example.myapp) |
 | `user` | `AvafliUser` | ✅ | The authenticated user |
 | `options` | `AvafliOptions?` | — | Optional behavior toggles |
@@ -312,38 +312,23 @@ let options = AvafliOptions(
 - `avafli_daily_entry_claimed` — Daily entries awarded (auto-claimed on open)
 - `avafli_prize_won` — The user was selected as a winner
 
-## GDPR / CCPA
+## Account deletion in your app
 
-Handle erasure requests with `optOut()`:
+If your app has its own delete-account flow, call `optOut()` from it so the
+user's Avafli data is erased along with their account. Users can also delete
+their data themselves at any time from the Privacy Policy screen inside the
+experience — no integration required.
 
 ```swift
-Task {
-    do {
-        try await Avafli.optOut()
-        print("User opted out; data erased.")
-    } catch {
-        print("Opt-out failed: \(error)")
-    }
-}
+// From your delete-account flow
+try await Avafli.optOut()
 ```
 
-This is the complete Right-to-be-Forgotten path. It removes the person's personal
-information everywhere it is held — including prize-claim records, which carry name,
-address and phone — links their devices together so one call covers all of them, and
-permanently silences the experience on the device so it survives a reinstall.
-
-Users can also trigger this themselves without any wiring from you: every legal
-link in the experience opens the Privacy Policy in an in-app webview, and its
-**Delete my data & stop participating** section confirms and runs the same opt-out.
-
-De-identified entry records are deliberately retained. They are the evidence that a
-drawing was fair and that a prize went to a real eligible person, which a sweepstakes
-operator must be able to show; GDPR Art. 17(3) exempts data needed for legal claims.
-The person is erased, the proof is kept.
-
-> `optOut()` is the only erasure API. There is no hard-delete of entry records —
-> that would both destroy the fairness evidence above and, leaving no tombstone,
-> let delete-and-re-register farm unlimited entries.
+The erasure is identity-wide (one call covers all of the person's devices),
+includes prize-claim records, and permanently silences the experience on the
+device — it survives a reinstall. De-identified entry records are retained as
+the legally required evidence that drawings were fair (GDPR Art. 17(3)): the
+person is erased, the proof is kept.
 
 
 ## API Reference
@@ -361,6 +346,7 @@ The person is erased, the proof is kept.
 | ------ | ------- | ----------- |
 | `Avafli.registerForPushNotifications()` | `Void` | Request permission and register for APNs |
 | `Avafli.didRegisterForRemoteNotifications(deviceToken:)` | `Void` | Forward APNs token to Avafli |
+| `Avafli.didReceiveFCMToken(_:)` | `Void` | Forward the FCM registration token so server-sent reminders can deliver |
 | `Avafli.didFailToRegisterForRemoteNotifications(error:)` | `Void` | Forward APNs registration failure to Avafli |
 
 For detailed API documentation, see the [Avafli Docs](https://sdk.avafli.com/ios).

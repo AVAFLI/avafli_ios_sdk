@@ -1,6 +1,6 @@
 # Avafli SDK — API Reference
 
-The [README](../README.md) is the canonical overview of the SDK; this page documents every public symbol in v2.
+The [README](../README.md) is the canonical overview of the SDK; this page documents every public symbol as of 3.1.1.
 
 ## Table of Contents
 
@@ -41,7 +41,7 @@ The single entry point — call once at app launch. Stores the configuration, se
 public static func optOut() async throws
 ```
 
-Right-to-Delete opt-out: tombstones the person on the backend (identity-wide, PII anonymized, email suppressed) and permanently silences the experience on this device. Wire this to the opt-out action in your privacy-policy flow.
+Right-to-Delete opt-out: tombstones the person on the backend (identity-wide, PII anonymized, email suppressed) and permanently silences the experience on this device. If your app has its own delete-account flow, call this from it so the user's Avafli data is erased along with their account. Users can also delete their data themselves at any time from the Privacy Policy screen inside the experience — no integration required.
 
 **Throws:** `AvafliError.notConfigured`, `AvafliError.authenticationRequired`.
 
@@ -97,7 +97,7 @@ public struct AvafliConfiguration {
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `apiKey` | `String` | ✅ | Your Avafli API key from the dashboard |
-| `environment` | `AvafliEnvironment` | ✅ | `.production` (the only environment) |
+| `environment` | `AvafliEnvironment` | — | `.production` (default; the only environment) |
 | `bundleId` | `String` | ✅ | App bundle ID (e.g. `com.example.myapp`) |
 | `user` | `AvafliUser` | ✅ | The authenticated user |
 | `options` | `AvafliOptions` | — | Optional behavior toggles |
@@ -243,7 +243,7 @@ Event-name constants emitted by the SDK:
 
 ```swift
 public enum AvafliConstants {
-    public static let sdkVersion = "3.0.0"
+    public static let sdkVersion = "3.1.1"
     public static let platformOS = "iOS"
 }
 ```

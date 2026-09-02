@@ -121,27 +121,30 @@ See the [event list](API_REFERENCE.md#avaflianalyticsevent) for everything the S
 
 ---
 
-## 5. GDPR / CCPA Flows
+## 5. Account Deletion in Your App
 
-Right-to-be-Forgotten — `optOut()` is the single, complete erasure path. It
-scrubs the person's PII everywhere (including prize-claim records), links their
-devices so one call covers all of them, tombstones so it survives a reinstall,
-and permanently silences the experience:
+If your app has its own delete-account flow, call `optOut()` from it so the
+user's Avafli data is erased along with their account. It scrubs the person's
+PII everywhere (including prize-claim records), links their devices so one call
+covers all of them, tombstones so it survives a reinstall, and permanently
+silences the experience:
 
 ```swift
+// From your delete-account flow
 Task {
     do {
         try await Avafli.optOut()
-        print("User opted out — data erased, Avafli experience permanently silenced.")
+        print("Avafli data erased; experience permanently silenced.")
     } catch {
         print("Opt-out failed: \(error)")
     }
 }
 ```
 
-Users can also run the same opt-out themselves, no wiring required: the
-Privacy Policy opens in an in-app webview from any legal link, and its
-**Delete my data & stop participating** section confirms and runs it.
+Users can also delete their data themselves at any time — no integration
+required: the Privacy Policy opens in an in-app webview from any legal link,
+and its **Delete my data & stop participating** section confirms and runs the
+same erasure.
 
 ---
 

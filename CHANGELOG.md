@@ -1,6 +1,27 @@
 # Changelog
 
 
+## 3.1.1 — 2026-09-02
+
+### Fixed
+
+- **Natural keyboard dismissal on every input screen.** All input scroll
+  views (email capture, adoption / new-address OTP code entry, and every
+  prize-claim step including the address form and post-submit story
+  editor) now dismiss the keyboard interactively on drag-down —
+  `.scrollDismissesKeyboard(.interactively)` on iOS 16+, with a scoped
+  per-scroll-view `keyboardDismissMode = .interactive` equivalent on
+  iOS 15 (never a global `UIScrollView.appearance()` proxy). This was the
+  missing piece of the 2.9 keyboard-avoidance work: the number-pad screens
+  (OTP, phone, zip) have no return key, so drag-down is their one natural
+  dismissal affordance. Field scroll-into-view on focus and full
+  reachability of content below the keyboard (VERIFY pill, "Send a new
+  code", legal footers) were audited across all five input surfaces and
+  were already handled by `.avafliKeyboardAvoiding()`; the keyboard-inset
+  math is now extracted into a pure, unit-tested helper
+  (`AvafliKeyboardObserver.overlap`) that clamps at 0 so no stale inset or
+  blank gap can survive dismissal.
+
 ## 3.1.0 — 2026-09-01
 
 ### Added

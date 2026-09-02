@@ -66,6 +66,9 @@ struct AvafliClaimStepPage<Content: View>: View {
                 .padding(.horizontal, 28)
                 .avafliKeyboardAvoiding()
             }
+            // Drag-down sheds the keyboard interactively — covers the phone /
+            // zip number pads (no return key) on every claim step.
+            .avafliScrollDismissesKeyboard()
             .environment(\.avafliScrollToField, AvafliKeyboardScroll.scrollAction(proxy))
         }
     }

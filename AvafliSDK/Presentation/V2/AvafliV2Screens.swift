@@ -691,6 +691,10 @@ struct AvafliV2CaptureView: View {
                 // scrollable and reachable with the keyboard up.
                 .avafliKeyboardAvoiding()
             }
+            // Drag-down sheds the keyboard interactively (iOS convention);
+            // the avoidance padding above animates away with it, so no stale
+            // inset is left behind.
+            .avafliScrollDismissesKeyboard()
             .onChange(of: emailFocused) { focused in
                 if focused {
                     AvafliKeyboardScroll.scrollAction(proxy)(Self.emailAnchor)
@@ -1251,6 +1255,9 @@ struct AvafliV2CodeEntryView: View {
                 // reachable with the number pad up.
                 .avafliKeyboardAvoiding()
             }
+            // The number pad has NO return key — the interactive drag-down is
+            // this screen's one natural dismissal affordance.
+            .avafliScrollDismissesKeyboard()
             .onChange(of: codeFocused) { focused in
                 if focused {
                     AvafliKeyboardScroll.scrollAction(proxy)(Self.codeAnchor)

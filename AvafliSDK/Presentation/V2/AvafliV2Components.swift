@@ -834,6 +834,15 @@ final class AvafliKeyboardObserver: ObservableObject {
 
     private var tokens: [NSObjectProtocol] = []
 
+    /// Overlap between the keyboard's end frame and the screen — the exact
+    /// bottom padding the scroll content needs. Pure so the inset math is
+    /// unit-testable: a hidden/dismissing keyboard reports an off-screen frame
+    /// (minY >= screen maxY) and must yield 0, never a negative (which would
+    /// leave a stale inset or a blank gap after dismissal).
+    static func overlap(keyboardFrame: CGRect, screenBounds: CGRect) -> CGFloat {
+        max(0, screenBounds.maxY - keyboardFrame.minY)
+    }
+
     init() {
         let nc = NotificationCenter.default
         tokens.append(nc.addObserver(
@@ -845,7 +854,7 @@ final class AvafliKeyboardObserver: ObservableObject {
             else { return }
             // Overlap with the screen, not the raw keyboard height — a hidden
             // keyboard reports an off-screen frame.
-            let overlap = max(0, UIScreen.main.bounds.maxY - frame.minY)
+            let overlap = Self.overlap(keyboardFrame: frame, screenBounds: UIScreen.main.bounds)
             withAnimation(.easeOut(duration: 0.25)) { self.height = overlap }
         })
         tokens.append(nc.addObserver(
@@ -874,6 +883,73 @@ private struct AvafliKeyboardAvoiding: ViewModifier {
 extension View {
     func avafliKeyboardAvoiding() -> some View {
         modifier(AvafliKeyboardAvoiding())
+    }
+
+    /// Natural keyboard dismissal for the experience's input scroll views:
+    /// dragging the page down sheds the keyboard interactively (the standard
+    /// iOS convention — and the ONLY dismissal affordance for the number-pad
+    /// screens, which have no return key). Apply to the ScrollView itself,
+    /// alongside `.avafliKeyboardAvoiding()` on its content.
+    @ViewBuilder func avafliScrollDismissesKeyboard() -> some View {
+        if #available(iOS 16.0, *) {
+            scrollDismissesKeyboard(.interactively)
+        } else {
+            // iOS 15 equivalent: reach the underlying UIScrollView and set its
+            // keyboardDismissMode. Scoped to this scroll view — never a global
+            // UIScrollView.appearance() proxy (the SDK must not restyle the
+            // host app).
+            background(AvafliScrollKeyboardDismissConfigurator())
+        }
+    }
+}
+
+/// iOS 15 fallback for `.scrollDismissesKeyboard(.interactively)`: from the
+/// injected helper view, find the sibling UIScrollView SwiftUI hosts for the
+/// nearest ScrollView and set `keyboardDismissMode = .interactive`. Applied as
+/// a `.background` of the ScrollView, so the shared container is at most a
+/// couple of ancestors up. Internal (not private) so the resolution logic is
+/// unit-testable against a constructed view hierarchy.
+struct AvafliScrollKeyboardDismissConfigurator: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let probe = UIView()
+        probe.isUserInteractionEnabled = false
+        probe.isHidden = true
+        DispatchQueue.main.async {
+            Self.configureNearestScrollView(from: probe)
+        }
+        return probe
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        // The scroll view can be re-created on structural updates — re-resolve.
+        DispatchQueue.main.async {
+            Self.configureNearestScrollView(from: uiView)
+        }
+    }
+
+    static func configureNearestScrollView(from probe: UIView) {
+        var ancestor = probe.superview
+        var hops = 0
+        while let current = ancestor, hops < 5 {
+            if let scrollView = firstScrollView(in: current, skipping: probe) {
+                scrollView.keyboardDismissMode = .interactive
+                return
+            }
+            ancestor = current.superview
+            hops += 1
+        }
+    }
+
+    /// Breadth-first search so the CLOSEST scroll view wins (never a distant
+    /// host-app one).
+    private static func firstScrollView(in root: UIView, skipping probe: UIView) -> UIScrollView? {
+        var queue: [UIView] = [root]
+        while !queue.isEmpty {
+            let view = queue.removeFirst()
+            if let scrollView = view as? UIScrollView { return scrollView }
+            queue.append(contentsOf: view.subviews.filter { $0 !== probe })
+        }
+        return nil
     }
 }
 
