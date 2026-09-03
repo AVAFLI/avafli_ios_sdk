@@ -1,6 +1,10 @@
 # Changelog
 
 
+## 3.1.2
+
+- Fixed: an undecodable non-2xx response (e.g. a load balancer's HTML 502) is now classified as a server outage instead of a device connectivity problem — no more "check your connection" for infrastructure failures.
+
 ## 3.1.1 — 2026-09-02
 
 ### Fixed

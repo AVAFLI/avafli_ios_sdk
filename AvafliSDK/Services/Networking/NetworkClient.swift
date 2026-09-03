@@ -302,10 +302,13 @@ final class URLSessionNetworkClient: NetworkClient {
                     }
                     return .failure(AvafliError.internalError(errorBody.error.message))
                 }
-                return .failure(AvafliError.network(
-                    NSError(domain: "AvafliAPI", code: httpResponse.statusCode,
-                            userInfo: [NSLocalizedDescriptionKey: "HTTP \(httpResponse.statusCode)"])
-                ))
+                // An undecodable non-2xx body (a load balancer's HTML 502, a
+                // proxy error page) is a SERVER outage, not a device
+                // connectivity problem — .network here produced "check your
+                // connection" for infrastructure failures. 5xx keeps a retry
+                // affordance via internalError's handling; the offline queue
+                // correctly refuses both (transport-only classifier).
+                return .failure(AvafliError.internalError("HTTP \(httpResponse.statusCode)"))
             }
         }
 
