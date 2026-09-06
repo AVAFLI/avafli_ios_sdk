@@ -24,9 +24,13 @@ enum AvafliV2CacheRender {
         giveaway: GiveawayConfig?,
         streak: StreakState?,
         hasEmailConsent: Bool,
-        isLoading: Bool
+        isLoading: Bool,
+        adoptionPending: Bool = false
     ) -> Bool {
         guard isLoading else { return false }
+        // A parked cross-device link owns the open: the code screen is the
+        // first frame, never a cached dashboard (see hydrateFromCache).
+        guard !adoptionPending else { return false }
         guard giveaway != nil else { return false }
         guard hasEmailConsent else { return false }
         guard streak != nil else { return false }
@@ -134,6 +138,24 @@ final class AvafliExperienceViewModel: ObservableObject {
     /// experience knows registration is complete without storing plaintext email.
     private var emailSubmittedKey: String {
         "winr.\(container.configuration.bundleId).user.\(container.user.id).emailSubmitted"
+    }
+
+    /// Cooldown between automatic code re-sends for a parked link: every open
+    /// lands on the code screen, but the e-mail goes out at most once per
+    /// window (the code itself lives 10 minutes). "Send a new code" always sends.
+    private static let adoptionCodeResendCooldown: TimeInterval = 10 * 60
+
+    private var adoptionCodeSentAtKey: String {
+        "winr.\(container.configuration.bundleId).user.\(container.user.id).adoptionCodeSentAt"
+    }
+
+    private var adoptionCodeIsStale: Bool {
+        let last: Double = (try? container.storage.load(Double.self, for: adoptionCodeSentAtKey)) ?? 0
+        return Date().timeIntervalSince1970 - last >= Self.adoptionCodeResendCooldown
+    }
+
+    private func markAdoptionCodeSent() {
+        try? container.storage.save(Date().timeIntervalSince1970, for: adoptionCodeSentAtKey)
     }
 
     private var streakStorageKey: String {
@@ -432,11 +454,25 @@ final class AvafliExperienceViewModel: ObservableObject {
         var isLoading = false
         if case .loading = state { isLoading = true }
 
+        // A parked cross-device link OWNS this open: the code screen is the
+        // FIRST frame — never a cached dashboard that sits there for the
+        // network round-trips and reads as "day 1" to a person who then
+        // closes the sheet having seen no code prompt (while the code e-mail
+        // is already on its way). load() re-affirms the screen and handles
+        // the cooled-down resend.
+        if container.adoptionPending == true, isLoading {
+            if let giveaway { activeGiveaway = giveaway }
+            codeError = nil
+            state = .adoptionReentry
+            return
+        }
+
         guard AvafliV2CacheRender.canHydrate(
             giveaway: giveaway,
             streak: stored,
             hasEmailConsent: hasEmailConsent,
-            isLoading: isLoading
+            isLoading: isLoading,
+            adoptionPending: container.adoptionPending == true
         ), let giveaway, var display = stored else { return }
 
         let ladder = giveaway.streakLadder.isEmpty
@@ -524,7 +560,11 @@ final class AvafliExperienceViewModel: ObservableObject {
                 // Backend is the source of truth for email consent. If it confirms
                 // an email on file, seed the local "submitted" flag so a user whose
                 // local flag was lost (e.g. reinstall) isn't re-prompted for email.
-                if response.emailConsentStatus == true {
+                // ...unless a cross-device link is parked: the backend echoes
+                // the shell user's consent, and seeding the flag from it let
+                // the next open bypass the code screen into a cached dashboard
+                // (Sept 2026 field report).
+                if response.emailConsentStatus == true, response.adoptionPending != true {
                     try? storage.save(true, for: emailSubmittedKey)
                 }
 
@@ -586,18 +626,27 @@ final class AvafliExperienceViewModel: ObservableObject {
             // onto the code screen with "pick up where you left off" copy.
             // One-shot per experience open; any failure falls through to the
             // normal email-capture gate — never a dead end.
-            if backendAdoptionPending == true, !hasEmailConsent, !didAttemptAdoptionRestage {
+            // Runs BEFORE the email gate (hardened Sept 2026): an earlier open
+            // may have seeded the local consent flag from the backend's echo
+            // for the shell user, and a parked link must never be bypassed
+            // into a cached dashboard or a claim. Screen first, then a
+            // cooled-down resend; a failed send keeps the code screen up.
+            if backendAdoptionPending == true, !didAttemptAdoptionRestage {
                 didAttemptAdoptionRestage = true
+                codeError = nil
+                state = .adoptionReentry
+                guard adoptionCodeIsStale else { return }
                 do {
                     let restage = try await container.network.send(RestageAdoptionRequest())
                     if restage.sent {
-                        codeError = nil
-                        state = .adoptionReentry
+                        markAdoptionCodeSent()
                         return
                     }
                     Logger.shared.log("restageAdoption declined (sent=false) — falling back to email capture", level: .info)
+                    Avafli.clearAdoptionPending()
                 } catch {
-                    Logger.shared.log("restageAdoption failed — falling back to email capture: \(error)", level: .error)
+                    Logger.shared.log("restageAdoption failed — code screen kept, resend available: \(error)", level: .error)
+                    return
                 }
             }
 
@@ -787,6 +836,7 @@ final class AvafliExperienceViewModel: ObservableObject {
                 // The adoption is complete — a restaged re-entry must not
                 // re-trigger on the next open.
                 Avafli.clearAdoptionPending()
+                try? container.storage.remove(for: adoptionCodeSentAtKey)
                 // The inbox is proven and the backend has the email — record
                 // consent now (submitEmail no longer pre-saves the flag).
                 recordEmailConsent(
@@ -894,6 +944,7 @@ final class AvafliExperienceViewModel: ObservableObject {
             defer { Task { @MainActor in self.isVerifyingCode = false } }
             do {
                 let response = try await container.network.send(RestageAdoptionRequest())
+                if response.sent { markAdoptionCodeSent() }
                 await MainActor.run {
                     self.codeError = response.sent ? nil : AvafliV2Strings.resendFailed
                 }
@@ -1011,6 +1062,7 @@ final class AvafliExperienceViewModel: ObservableObject {
                 if response.verificationRequired == true {
                     // The merge is parked until the person proves the inbox is
                     // theirs. Raw email stays in view-model state only.
+                    markAdoptionCodeSent()
                     await MainActor.run {
                         self.pendingConsents = (ageConfirmed, marketingConsent)
                         self.codeError = nil

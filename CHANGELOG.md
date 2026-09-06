@@ -1,9 +1,19 @@
 # Changelog
 
 
-## 3.1.2
+## 3.1.3 — 2026-09-06
 
-- Fixed: an undecodable non-2xx response (e.g. a load balancer's HTML 502) is now classified as a server outage instead of a device connectivity problem — no more "check your connection" for infrastructure failures.
+### Fixed
+
+- **A parked cross-device link now opens on the code screen first.** A device
+  that typed an email already owned by another device (and never entered the
+  6-digit code) could paint the cached dashboard first, and — once the backend
+  had echoed the shell user's consent on an earlier open — skip the code
+  screen entirely on later opens and claim on the wrong record. The re-entry
+  now runs before the email gate, the code screen is the first frame, and the
+  consent echo is ignored while a link is parked.
+- **Code re-sends are rate-limited** to once per 10 minutes across opens;
+  "Send a new code" still always sends.
 
 ## 3.1.1 — 2026-09-02
 

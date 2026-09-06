@@ -114,7 +114,7 @@ Avafli is distributed via **Swift Package Manager** and **CocoaPods**:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.1.1")
+    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.1.3")
 ]
 ```
 
