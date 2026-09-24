@@ -1,11 +1,12 @@
 # Avafli SDK — API Reference
 
-The [README](../README.md) is the canonical overview of the SDK; this page documents every public symbol as of 3.1.1.
+The [README](../README.md) is the canonical overview of the SDK; this page documents every public symbol as of 3.1.4.
 
 ## Table of Contents
 
 - [Avafli (Static API)](#avafli-static-api)
 - [AvafliConfiguration](#avafliconfiguration)
+- [AvafliAutoOpen](#avafliautoopen)
 - [AvafliOptions](#avaflioptions)
 - [AvafliEnvironment](#avaflienvironment)
 - [AvafliUser](#avafliuser)
@@ -31,7 +32,35 @@ The primary entry point for the SDK. All methods are static.
 public static func configure(_ configuration: AvafliConfiguration)
 ```
 
-The single entry point — call once at app launch. Stores the configuration, sets the logging level, registers the device in the background, and fetches the active giveaway. After registration completes (and on each app foreground), the SDK presents the experience automatically at most once per calendar day — this is the only way the experience appears; there is no manual launch API. Auto-open can be disabled remotely via the dashboard; unregistered users see at most 3 auto-opens; opted-out users never see it.
+The single entry point — call once at app launch. Stores the configuration, sets the logging level, registers the device in the background, and fetches the active giveaway. After registration completes (and on each app foreground), the SDK presents the experience automatically at most once per calendar day, subject to `AvafliConfiguration.autoOpen` (default `.always`). Auto-open can be disabled remotely via the dashboard; unregistered users see at most 3 auto-opens; opted-out users never see it. Device registration and analytics (DAU/MAU) run on configure regardless of the auto-open mode.
+
+---
+
+### `present(completion:)`
+
+```swift
+@discardableResult
+public static func present(
+    completion: ((Result<DailyEntryGrant, AvafliError>) -> Void)? = nil
+) -> Bool
+```
+
+Publisher-initiated open: presents the experience modally from the top-most view controller — from a button, a screen, or an onboarding-complete handler. Explicit invocation bypasses the once-per-day mark and the unregistered impression cap, and does not count as an impression; on close it writes the same once-per-day mark auto-open writes, so a later auto-open that day does not double-pop.
+
+Guards match auto-open: the SDK must be configured, the user must not have opted out, the publisher must not be suspended, an active giveaway must exist, and the experience must not already be on screen (no-op). If device registration is still in flight, `present()` waits for it; if registration failed, it returns without presenting and logs.
+
+**Returns:** `false` if the SDK is not configured or no presenting view controller could be found; `true` once presentation begins. The completion receives the `DailyEntryGrant` when today's entry is claimed, or an `AvafliError` otherwise.
+
+---
+
+### `holdAutoOpen()` / `releaseAutoOpen()`
+
+```swift
+public static func holdAutoOpen()
+public static func releaseAutoOpen()
+```
+
+Defer the once-per-day auto-open around a boot flow. `holdAutoOpen()` may be called before `configure(_:)`; while held, the auto-open is deferred and nothing is burned (no once-per-day mark, no impression). `present(completion:)` still works while held. `releaseAutoOpen()` clears the hold and immediately re-runs the auto-open eligibility check (which applies the effective `autoOpen` mode). Both are safe before configure and idempotent.
 
 ---
 
@@ -89,7 +118,8 @@ public struct AvafliConfiguration {
         environment: AvafliEnvironment = .production,
         bundleId: String,
         user: AvafliUser,
-        options: AvafliOptions = .init()
+        options: AvafliOptions = .init(),
+        autoOpen: AvafliAutoOpen = .always
     )
 }
 ```
@@ -101,6 +131,29 @@ public struct AvafliConfiguration {
 | `bundleId` | `String` | ✅ | App bundle ID (e.g. `com.example.myapp`) |
 | `user` | `AvafliUser` | ✅ | The authenticated user |
 | `options` | `AvafliOptions` | — | Optional behavior toggles |
+| `autoOpen` | `AvafliAutoOpen` | — | When the SDK auto-opens the experience (default `.always`) |
+
+Existing initializers stay source-compatible — `autoOpen` is optional and defaults to today's behavior.
+
+---
+
+## AvafliAutoOpen
+
+```swift
+public enum AvafliAutoOpen {
+    case always
+    case returningUsersOnly
+    case never
+}
+```
+
+| Case | Behavior |
+|------|----------|
+| `.always` | Default. Auto-opens once per calendar day when eligible — unchanged from previous releases. |
+| `.returningUsersOnly` | Skips the auto-open for the session in which the device is registered for the first time (`isNewUser`), so a first-time user's onboarding is not interrupted. Every later launch auto-opens as normal. An older backend that does not report `isNewUser` is treated as returning. |
+| `.never` | The SDK never auto-opens; the host calls `Avafli.present(completion:)`. |
+
+The dashboard can also set a server-side mode (`experience.autoOpenMode`), and `experience.autoOpenEnabled == false` remains the hard kill switch. The effective mode is the most restrictive of the server settings and this value (`never` > `returningUsersOnly` > `always`). Registration and analytics run on `configure(_:)` in every mode.
 
 ---
 
@@ -207,7 +260,7 @@ public struct DailyEntryGrant {
 }
 ```
 
-The entries granted during an auto-opened session. `baseEntries` is the daily streak-ladder amount (a simple +10 per day); `bonusEntries` defaults to `0` and holds any additional entries granted alongside the daily amount.
+The entries granted during a session (auto-opened or via `present(completion:)`). `baseEntries` is the daily streak-ladder amount (a simple +10 per day); `bonusEntries` defaults to `0` and holds any additional entries granted alongside the daily amount.
 
 ---
 

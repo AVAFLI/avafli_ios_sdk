@@ -1,6 +1,40 @@
 # Changelog
 
 
+## 3.1.4 — 2026-09-24
+
+### Added
+
+- **Publisher presentation control.** `AvafliConfiguration.autoOpen`
+  (`AvafliAutoOpen`: `.always` — the unchanged default — `.returningUsersOnly`,
+  `.never`) decides whether the drawer opens on its own; the server-side
+  `experience.autoOpenMode` is honored too and the most restrictive of the
+  two wins (the `autoOpenEnabled` kill switch always wins).
+  `.returningUsersOnly` skips exactly the session in which the device
+  registered for the first time (`isNewUser` on `registerDevice`; an older
+  backend that omits it is treated as returning).
+- **`Avafli.present()`** — publisher-initiated open (a button, a screen, the
+  end of onboarding). Same guards as the auto-open, bypasses the once-per-day
+  mark and the unregistered impression cap, never counts an impression,
+  waits for an in-flight registration instead of racing it, and writes the
+  once-per-day mark when the drawer closes so the auto-open won't double-pop.
+- **`Avafli.holdAutoOpen()` / `Avafli.releaseAutoOpen()`** — defer the
+  once-a-day auto-open through a boot flow (safe before `configure`,
+  idempotent; nothing is burned while held).
+- Device registration and analytics still run on `configure(_:)` in every
+  mode — the mode only gates the drawer.
+
+### Fixed
+
+- **Token-refresh hardening (the Sept 24 cold-open failure).** Before any
+  authed request the cached JWT's `exp` is checked and an expired (or
+  within-60s) token is refreshed first instead of eating a guaranteed 401;
+  concurrent callers — including the experience's own client — share ONE
+  in-flight `refreshToken` round-trip; and a boot whose registration /
+  giveaway fetch died on a flaky network is re-run on the next foreground
+  before the auto-open check (a failed boot never writes the once-per-day
+  mark or counts an impression).
+
 ## 3.1.3 — 2026-09-06
 
 ### Fixed

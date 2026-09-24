@@ -4,7 +4,7 @@
 [![Platform](https://img.shields.io/badge/platform-iOS%2015.0%2B-blue.svg)](https://developer.apple.com/ios/)
 [![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange.svg)](https://swift.org)
 [![SPM](https://img.shields.io/badge/SPM-compatible-brightgreen.svg)](https://swift.org/package-manager/)
-[![CocoaPods](https://img.shields.io/badge/CocoaPods-3.1.1-red.svg)](https://cocoapods.org/pods/AvafliSDK)
+[![CocoaPods](https://img.shields.io/badge/CocoaPods-3.1.4-red.svg)](https://cocoapods.org/pods/AvafliSDK)
 
 ---
 
@@ -114,7 +114,7 @@ Avafli is distributed via **Swift Package Manager** and **CocoaPods**:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.1.3")
+    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.1.4")
 ]
 ```
 
@@ -169,6 +169,7 @@ Avafli.configure(config)
 | `bundleId` | `String` | ✅ | App bundle ID (e.g., com.example.myapp) |
 | `user` | `AvafliUser` | ✅ | The authenticated user |
 | `options` | `AvafliOptions?` | — | Optional behavior toggles |
+| `autoOpen` | `AvafliAutoOpen` | — | `.always` (default), `.returningUsersOnly`, or `.never` — see [Controlling when the drawer opens](#controlling-when-the-drawer-opens) |
 
 ### AvafliOptions
 
@@ -216,7 +217,45 @@ changes.
 
 ## The Experience Opens Itself
 
-The V2 experience presents itself automatically once per calendar day (first app-open of the day). Entries are claimed automatically when it opens, and the celebration is the first thing the user sees: the dashboard opens with today's grant already showing — the day tile checks off with a confetti burst, the total counts up and pops, and the bar leads with a "YOU'RE ON A ROLL!" toast before settling into the come-back message. There is no button to tap to collect entries (the pill just reads GOT IT and closes), and no manual launch API — `configure(_:)` is the entire integration, and the SDK handles everything else. Brand-new users first submit their email, then get a one-time "You're in!" welcome modal.
+The V2 experience presents itself automatically once per calendar day (first app-open of the day). Entries are claimed automatically when it opens, and the celebration is the first thing the user sees: the dashboard opens with today's grant already showing — the day tile checks off with a confetti burst, the total counts up and pops, and the bar leads with a "YOU'RE ON A ROLL!" toast before settling into the come-back message. There is no button to tap to collect entries (the pill just reads GOT IT and closes) — `configure(_:)` is the entire integration, and the SDK handles everything else. Brand-new users first submit their email, then get a one-time "You're in!" welcome modal. If you need to decide *when* the drawer appears (for example after your own onboarding), see the next section.
+
+## Controlling when the drawer opens
+
+**The default is unchanged:** with nothing set, the drawer auto-opens once per calendar day exactly as before. Whatever mode you pick, device registration and analytics (DAU/MAU, SDK version, platform) happen on `configure(_:)` regardless — the mode only decides whether the drawer appears on its own.
+
+`AvafliConfiguration.autoOpen` takes one of three modes:
+
+| Mode | Behavior |
+| ---- | -------- |
+| `.always` (default) | Auto-open once per day when eligible — today's behavior |
+| `.returningUsersOnly` | Skip the auto-open for the session in which this device registers for the first time (so a first-run onboarding is never covered); every later launch auto-opens as normal |
+| `.never` | The SDK never opens the drawer on its own; you call `Avafli.present()` |
+
+Your publisher dashboard can also set a server-side mode; the most restrictive of the two wins, and the server kill switch always wins.
+
+### `Avafli.present()`
+
+Opens the drawer from a button, a screen, or the end of onboarding. It applies the same guards as the auto-open (configured, not opted out, not suspended, an active giveaway exists, not already on screen) but **bypasses** the once-per-day mark and the unregistered impression cap, and never counts an impression. If registration is still in flight it waits for it rather than racing it; if registration failed it resolves `false` (never throws). When the drawer closes it writes the same once-per-day mark the auto-open writes, so the auto-open won't double-pop that day.
+
+### `Avafli.holdAutoOpen()` / `Avafli.releaseAutoOpen()`
+
+`holdAutoOpen()` may be called before `configure(_:)`; while held, the once-a-day auto-open is deferred and nothing is burned (no mark, no impression). `present()` still works while held. `releaseAutoOpen()` clears the hold and immediately re-runs the auto-open eligibility check. Both are safe before `configure(_:)` and safe to call repeatedly.
+
+### Example — show the drawer after onboarding
+
+```swift
+// App launch — registers the device immediately in every mode.
+let config = AvafliConfiguration(
+    apiKey: "avafli_live_xxxxxxxxxx",
+    bundleId: "com.example.myapp",
+    user: AvafliUser(id: "user_abc123"),
+    autoOpen: .returningUsersOnly   // or .never to always open it yourself
+)
+Avafli.configure(config)
+
+// …later, when your onboarding finishes (or from a "Win prizes" button):
+Avafli.present()
+```
 
 ## Winner Experience
 
@@ -337,7 +376,10 @@ person is erased, the proof is kept.
 
 | Method | Returns | Description |
 | ------ | ------- | ----------- |
-| `Avafli.configure(config)` | `Void` | Initialize the SDK; the experience auto-opens once per day |
+| `Avafli.configure(config)` | `Void` | Initialize the SDK; the experience auto-opens once per day (see `autoOpen`) |
+| `Avafli.present(completion:)` | `Bool` | Open the experience yourself (after onboarding, from a button); bypasses the once-per-day mark |
+| `Avafli.holdAutoOpen()` | `Void` | Defer the once-a-day auto-open (safe before `configure`) |
+| `Avafli.releaseAutoOpen()` | `Void` | Clear the hold and re-run the auto-open check |
 | `Avafli.optOut()` | `async throws` | RTD opt-out — permanently silence the experience |
 
 ### Push Notifications

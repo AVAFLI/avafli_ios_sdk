@@ -60,6 +60,11 @@ struct RegisterDeviceResponse: Decodable {
     /// The next open calls `restageAdoption` and re-shows the code screen with
     /// "pick up where you left off" copy. OPTIONAL — absent from current prod.
     let adoptionPending: Bool?
+    /// True when this call minted a brand-new user (first-ever registration
+    /// of this device). Drives `AvafliAutoOpen.returningUsersOnly`, which
+    /// skips the auto-open for exactly this session. OPTIONAL — an older
+    /// backend omits it and the user is treated as returning (auto-open).
+    let isNewUser: Bool?
 }
 
 // MARK: - SDK Config (server-driven copy & branding)
@@ -89,7 +94,13 @@ struct SDKConfigResponse: Codable {
 /// Server-driven experience behavior flags.
 struct ExperienceConfig: Codable {
     /// Auto-present the experience on the first app-open of the day (default true).
+    /// `false` is the hard kill switch — it beats every other mode.
     let autoOpenEnabled: Bool?
+    /// Server-side auto-open mode: "always" | "returningUsersOnly" | "never"
+    /// (default always). Combined with the client's `AvafliConfiguration.autoOpen`
+    /// by "most restrictive wins" — see `AvafliAutoOpen.effective`. Unknown
+    /// values are ignored. OPTIONAL — absent from older backends.
+    let autoOpenMode: String?
     /// How many times an unregistered (no-email) user sees the auto-presented
     /// experience before it goes quiet (default 3 — MVP decision).
     let unregisteredImpressionCap: Int?
@@ -100,6 +111,9 @@ struct ExperienceConfig: Codable {
     /// above the fold on mobile). Admins enable it per publisher when there's
     /// a winner worth showcasing.
     let winnerBannerEnabled: Bool?
+
+    /// `autoOpenMode` parsed; unknown/absent → `.always`.
+    var resolvedAutoOpenMode: AvafliAutoOpen { AvafliAutoOpen(serverValue: autoOpenMode) }
 }
 
 struct SDKBrandingConfig: Codable {

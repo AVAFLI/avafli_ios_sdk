@@ -12,6 +12,10 @@ final class AvafliExperienceViewController: UIViewController {
 
     private let viewModel: AvafliExperienceViewModel
     private let theme: AvafliBranding
+    /// Fired once when the experience leaves the screen (any dismissal path).
+    /// A publisher-initiated `Avafli.present()` uses it to write the
+    /// once-per-day mark on close.
+    var onDismiss: (() -> Void)?
 
     init(viewModel: AvafliExperienceViewModel, theme: AvafliBranding) {
         self.viewModel = viewModel
@@ -53,6 +57,14 @@ final class AvafliExperienceViewController: UIViewController {
 
     @objc private func closeRequested() {
         dismiss(animated: true, completion: nil)
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        // Only a real dismissal — not a full-screen cover presented on top.
+        guard isBeingDismissed || presentingViewController == nil else { return }
+        onDismiss?()
+        onDismiss = nil
     }
 
     deinit {

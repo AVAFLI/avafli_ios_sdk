@@ -29,7 +29,7 @@ func application(_ application: UIApplication,
 }
 ```
 
-Uses `ConsoleAnalyticsAdapter` (logs to Xcode console) by default. Branding is server-driven — nothing to configure in code. The experience is exclusively auto-opened by the SDK; there is no manual launch API.
+Uses `ConsoleAnalyticsAdapter` (logs to Xcode console) by default. Branding is server-driven — nothing to configure in code. The experience auto-opens by default; see [Show After Onboarding](#7-show-after-onboarding) to control the timing yourself.
 
 ---
 
@@ -153,3 +153,50 @@ same erasure.
 ```swift
 let environment: AvafliEnvironment = .production  // production-only
 ```
+
+---
+
+## 7. Show After Onboarding
+
+By default the experience auto-opens once per calendar day. If your first-run
+flow has its own onboarding, keep the drawer out of it: set `autoOpen` on the
+configuration and open the drawer yourself with `Avafli.present()` when the
+moment is right. Registration and analytics (DAU/MAU) still run on
+`configure(_:)` regardless of mode.
+
+```swift
+import AvafliSDK
+
+// AppDelegate.swift — configure as usual, but never auto-open
+let config = AvafliConfiguration(
+    apiKey: "YOUR_API_KEY",
+    bundleId: Bundle.main.bundleIdentifier ?? "",
+    user: AvafliUser(id: "user_123"),
+    autoOpen: .never   // or .returningUsersOnly to skip only the first-ever launch
+)
+Avafli.configure(config)
+
+// OnboardingViewController.swift — open the drawer once onboarding is done
+func onboardingDidComplete() {
+    let started = Avafli.present { result in
+        switch result {
+        case .success(let grant):
+            print("Entry claimed — \(grant.total) entries today")
+        case .failure(let error):
+            print("Avafli present failed: \(error)")
+        }
+    }
+    if !started { print("Nothing to show (not configured / no presenting view controller)") }
+}
+```
+
+`present()` ignores the once-a-day rule and the impression cap, waits for
+device registration if it is still in flight, and no-ops if the drawer is
+already on screen or the user has opted out. `.returningUsersOnly` is the
+lighter option: it skips the auto-open only on the launch where the device is
+first registered, then behaves like `.always`.
+
+If your boot flow clears the navigation stack (splash screen, auth gate), call
+`Avafli.holdAutoOpen()` before `configure(_:)` and `Avafli.releaseAutoOpen()`
+once your main screen is on screen — the daily auto-open is deferred, nothing
+is burned, and `present()` still works while held.

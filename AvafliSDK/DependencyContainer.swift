@@ -48,16 +48,20 @@ struct DependencyContainer {
             apiKey: configuration.apiKey,
             tokenProvider: { keychain.loadToken() },
             refreshHandler: {
-                // Use a plain client to avoid recursion
-                let plainNetwork = URLSessionNetworkClient(baseURL: baseURL, apiKey: configuration.apiKey, enablePinning: false)
-                guard let rt = keychain.loadRefreshToken() else { return nil }
-                do {
-                    let response = try await plainNetwork.send(RefreshTokenRequest(refreshToken: rt))
-                    keychain.saveToken(response.token)
-                    keychain.saveRefreshToken(response.refreshToken)
-                    return response.token
-                } catch {
-                    return nil
+                // SDK-wide single flight: an experience call and a boot call
+                // that 401 together share ONE refreshToken round-trip.
+                await Avafli.tokenRefreshGate.run {
+                    // Use a plain client to avoid recursion
+                    let plainNetwork = URLSessionNetworkClient(baseURL: baseURL, apiKey: configuration.apiKey, enablePinning: false)
+                    guard let rt = keychain.loadRefreshToken() else { return nil }
+                    do {
+                        let response = try await plainNetwork.send(RefreshTokenRequest(refreshToken: rt))
+                        keychain.saveToken(response.token)
+                        keychain.saveRefreshToken(response.refreshToken)
+                        return response.token
+                    } catch {
+                        return nil
+                    }
                 }
             },
             enablePinning: false,  // Disabled until pin rotation is automated

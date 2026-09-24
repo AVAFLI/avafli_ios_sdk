@@ -185,12 +185,55 @@ import CommonCrypto
 
 // MARK: - Network Client
 
+/// Coalesces concurrent callers onto ONE in-flight async operation: the first
+/// caller runs it, every caller arriving before it finishes awaits that same
+/// result. Used for token refresh — a cold open fires 2–3 parallel authed
+/// calls with a dead token → parallel 401s → without this, parallel
+/// `refreshToken` calls with the same refresh token.
+final class AvafliSingleFlight<Value> {
+    private let lock = NSLock()
+    private var inFlight: Task<Value, Never>?
+
+    func run(_ operation: @escaping () async -> Value) async -> Value {
+        await claim(operation).value
+    }
+
+    /// Joins the in-flight task, or starts one. Assigned under the SAME lock
+    /// hold as the guard: the task clears the slot under this lock when it
+    /// finishes, so it can't null it before the assignment lands.
+    private func claim(_ operation: @escaping () async -> Value) -> Task<Value, Never> {
+        lock.lock(); defer { lock.unlock() }
+        if let inFlight { return inFlight }
+        let task = Task<Value, Never> {
+            let value = await operation()
+            self.land()
+            return value
+        }
+        inFlight = task
+        return task
+    }
+
+    private func land() {
+        lock.lock()
+        inFlight = nil
+        lock.unlock()
+    }
+}
+
 final class URLSessionNetworkClient: NetworkClient {
     private let baseURL: URL
     private let apiKey: String
     private let tokenProvider: () -> String?
     private let refreshHandler: (() async -> String?)?
     private let session: URLSession
+    /// Per-client single-flight over `refreshHandler` (the SDK-wide one is
+    /// `Avafli.tokenRefreshGate`, which every handler routes through).
+    private let refreshGate = AvafliSingleFlight<String?>()
+
+    /// A cached token whose JWT `exp` is within this many seconds is treated
+    /// as dead and refreshed BEFORE the request instead of eating a
+    /// guaranteed 401 (same 60s leeway `KeychainStorage` applies).
+    static let expiryLeeway: TimeInterval = 60
 
     /// - Parameters:
     ///   - enablePinning: When `true` (the default), enforces SPKI certificate pinning.
@@ -198,20 +241,25 @@ final class URLSessionNetworkClient: NetworkClient {
     ///     Supports pin rotation: supply current + backup pins so certificates
     ///     can be rotated server-side without an SDK update. When `nil`, uses
     ///     the built-in Google Trust Services pins.
+    ///   - session: Test seam — a stubbed `URLSession`. When set, pinning is
+    ///     not applied (the session is used as given).
     init(
         baseURL: URL,
         apiKey: String,
         tokenProvider: @escaping () -> String? = { nil },
         refreshHandler: (() async -> String?)? = nil,
         enablePinning: Bool = true,
-        pinnedKeyHashes: [String]? = nil
+        pinnedKeyHashes: [String]? = nil,
+        session: URLSession? = nil
     ) {
         self.baseURL = baseURL
         self.apiKey = apiKey
         self.tokenProvider = tokenProvider
         self.refreshHandler = refreshHandler
 
-        if enablePinning {
+        if let session {
+            self.session = session
+        } else if enablePinning {
             let delegate = CertificatePinningDelegate(pinnedKeyHashes: pinnedKeyHashes)
             self.session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
         } else {
@@ -220,20 +268,35 @@ final class URLSessionNetworkClient: NetworkClient {
     }
 
     func send<R>(_ request: R) async throws -> R.Response where R : APIRequest {
+        let authed = request.path != "registerDevice" && request.path != "refreshToken"
+
+        // Proactive expiry pre-check: a token that is already past (or within
+        // `expiryLeeway` of) its `exp` is refreshed first — never sent.
+        if authed, let refreshHandler, let token = tokenProvider(), Self.isExpiringSoon(token) {
+            Logger.shared.log("[\(request.path)] Cached token expired/expiring — refreshing before the request", level: .debug)
+            _ = await refreshGate.run(refreshHandler)
+        }
+
         let result = try await execute(request)
 
         if case .failure(let error) = result,
            isAuthError(error),
            let refreshHandler = refreshHandler,
-           request.path != "registerDevice",
-           request.path != "refreshToken" {
-            if let _ = await refreshHandler() {
+           authed {
+            if let _ = await refreshGate.run(refreshHandler) {
                 let retryResult = try await execute(request)
                 return try retryResult.get()
             }
         }
 
         return try result.get()
+    }
+
+    /// True when the JWT's `exp` is past or within `expiryLeeway`. A token
+    /// that can't be decoded is NOT pre-refreshed (the 401 path handles it).
+    static func isExpiringSoon(_ token: String, now: Date = Date()) -> Bool {
+        guard let expiry = JWTDecoder.expiry(from: token) else { return false }
+        return expiry.timeIntervalSince(now) <= expiryLeeway
     }
 
     private func execute<R>(_ request: R) async throws -> Result<R.Response, Error> where R: APIRequest {

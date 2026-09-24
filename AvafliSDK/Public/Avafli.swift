@@ -34,6 +34,30 @@ public enum Avafli {
     private static var cachedOptedOut = false
     private static var lifecycleObserver: NSObjectProtocol?
 
+    // Publisher presentation control (3.1.4).
+    /// True while the host is holding the once-a-day auto-open (`holdAutoOpen()`).
+    /// Deliberately NOT reset by `configure(_:)` — a hold is set before it.
+    private static var autoOpenHeld = false
+    /// True when this session's `registerDevice` minted a brand-new user. The
+    /// `.returningUsersOnly` mode skips the auto-open for exactly this session.
+    private static var isNewUserThisSession = false
+    /// Registration (or the giveaway refresh) has settled — success or
+    /// failure — since the last `configure(_:)`. `present()` waits on it.
+    private static var hasBooted = false
+    /// The boot fetch died on a NETWORK-class error (offline / timeout). The
+    /// next foreground re-runs it before the auto-open check, so a flaky cold
+    /// open recovers without a relaunch. Nothing is marked or counted for a
+    /// failed boot (the gate needs a cached giveaway).
+    private static var bootRecoveryPending = false
+    /// Single-flight token refresh shared by EVERY network client the SDK
+    /// builds (see `refreshTokenIfNeeded` and `DependencyContainer`): a cold
+    /// open fires 2–3 parallel authed calls with a dead token → parallel
+    /// 401s → without this, parallel `refreshToken` calls with the same
+    /// refresh token (the Sept 24 Skape cold-open failure).
+    static let tokenRefreshGate = AvafliSingleFlight<String?>()
+    /// Test seam: replaces the network registration step of `configure(_:)`.
+    private static var registrationOverrideForTests: ((AvafliConfiguration) async -> Void)?
+
     // Auto-present persistence (per-bundle keys so app reinstalls of a different
     // publisher app on the same device don't cross-contaminate).
     private static var lastAutoPresentKey: String { "winr_last_auto_present_\(configuration?.bundleId ?? "")" }
@@ -67,21 +91,117 @@ public enum Avafli {
         return configuration != nil && !isSuspended
     }
 
-    // MARK: - Presentation (internal — driven exclusively by auto-open)
+    // MARK: - Presentation (publisher-initiated)
 
     /// Presents the Avafli experience modally from the top-most view controller
-    /// (auto-detected). Internal: the experience is opened only by the SDK's
-    /// once-per-day auto-open engine, never by the host app.
+    /// (auto-detected). Call it from a button, a screen, or the end of your
+    /// onboarding — typically paired with `AvafliConfiguration.autoOpen` set
+    /// to `.never` or `.returningUsersOnly`. Call on the main thread.
     ///
-    /// Returns `false` if the SDK is not configured or no presenting view
-    /// controller could be found.
+    /// Same guards as the auto-open: the SDK must be configured, the user not
+    /// opted out, the publisher not suspended, an active giveaway must exist
+    /// (otherwise a logged no-op) and the experience must not already be on
+    /// screen (no-op). Unlike the auto-open it **bypasses** the once-per-day
+    /// mark and the unregistered impression cap, and never counts an
+    /// impression. When the experience closes it writes the same once-per-day
+    /// mark the auto-open writes, so the auto-open won't double-pop that day.
+    ///
+    /// If device registration is still in flight the call is accepted and the
+    /// experience is presented once registration settles (it never races
+    /// `registerDevice`); if registration failed, `completion` receives
+    /// `.giveawayNotActive` — nothing is ever thrown to the host.
+    ///
+    /// - Returns: `false` when presentation was refused right away (not
+    ///   configured, opted out, suspended, no giveaway, no presenting view
+    ///   controller); `true` when it was presented, deferred until
+    ///   registration settles, or already on screen.
     @discardableResult
-    static func present(completion: ((Result<DailyEntryGrant, AvafliError>) -> Void)? = nil) -> Bool {
+    public static func present(completion: ((Result<DailyEntryGrant, AvafliError>) -> Void)? = nil) -> Bool {
+        lock.lock()
+        let configured = configuration != nil
+        let booted = hasBooted
+        let registration = registrationTask
+        lock.unlock()
+        guard configured else {
+            Logger.shared.log("present() ignored: SDK not configured", level: .info)
+            completion?(.failure(.notConfigured))
+            return false
+        }
+        // Registration in flight — never race registerDevice; present once it
+        // settles (the completion carries the outcome).
+        if !booted, let registration {
+            Logger.shared.log("present(): registration in flight — presenting once it settles", level: .debug)
+            Task {
+                await registration.value
+                await MainActor.run { _ = presentIfPresentable(completion: completion) }
+            }
+            return true
+        }
+        return presentIfPresentable(completion: completion)
+    }
+
+    /// The publisher-initiated open once registration has settled: the
+    /// auto-open's guards minus the once-per-day mark and the impression cap.
+    @discardableResult
+    private static func presentIfPresentable(completion: ((Result<DailyEntryGrant, AvafliError>) -> Void)?) -> Bool {
+        lock.lock()
+        let suspended = isSuspended
+        let optedOut = cachedOptedOut
+        let giveaway = cachedGiveaway
+        lock.unlock()
+        if suspended {
+            Logger.shared.log("present() ignored: publisher suspended", level: .info)
+            completion?(.failure(.serviceUnavailable))
+            return false
+        }
+        if optedOut {
+            Logger.shared.log("present() ignored: user opted out (RTD)", level: .info)
+            completion?(.failure(.optedOut))
+            return false
+        }
+        guard giveaway != nil else {
+            Logger.shared.log("present() ignored: no active giveaway (registration failed or nothing is running)", level: .info)
+            completion?(.failure(.giveawayNotActive))
+            return false
+        }
         guard let vc = topViewController() else {
+            Logger.shared.log("present() ignored: no presenting view controller", level: .info)
             completion?(.failure(.noPresentingViewController))
             return false
         }
-        return present(from: vc, completion: completion)
+        if vc is AvafliExperienceViewController {
+            Logger.shared.log("present() ignored: experience already on screen", level: .debug)
+            return true
+        }
+        Logger.shared.log("Presenting Avafli experience (publisher-initiated)", level: .info)
+        return present(from: vc, markDayOnClose: true, completion: completion)
+    }
+
+    // MARK: - Auto-open control (publisher)
+
+    /// Pauses the once-a-day auto-open.
+    ///
+    /// Call this before `configure(_:)` when your app has a boot flow (splash
+    /// screen, auth gate, onboarding) the drawer must not appear over. While
+    /// held nothing is burned — no once-per-day mark, no impression — and
+    /// `present()` still works. Call `releaseAutoOpen()` once your main
+    /// screen is up.
+    public static func holdAutoOpen() {
+        lock.lock()
+        autoOpenHeld = true
+        lock.unlock()
+        Logger.shared.log("Auto-open held by host", level: .debug)
+    }
+
+    /// Releases a `holdAutoOpen()` and immediately re-runs the once-a-day
+    /// auto-open eligibility check (which applies the effective auto-open
+    /// mode). Safe to call before `configure(_:)`, and safe to call repeatedly.
+    public static func releaseAutoOpen() {
+        lock.lock()
+        autoOpenHeld = false
+        lock.unlock()
+        Logger.shared.log("Auto-open released by host", level: .debug)
+        Task { @MainActor in autoPresentIfEligible() }
     }
 
     private static func topViewController() -> UIViewController? {
@@ -112,6 +232,12 @@ public enum Avafli {
         // Restore the persisted RTD flag so an opted-out user stays suppressed
         // even before (or without) a network round-trip.
         cachedOptedOut = UserDefaults.standard.bool(forKey: optedOutKey)
+        // Fresh boot: registration hasn't settled, and "new user this session"
+        // is only ever set by this session's registerDevice. A host hold
+        // (`holdAutoOpen()`) is intentionally left alone — it's set before us.
+        hasBooted = false
+        isNewUserThisSession = false
+        bootRecoveryPending = false
         // Register the bundled Inter/Oswald faces for the V2 experience.
         AvafliV2Font.registerIfNeeded()
         Logger.shared.level = configuration.options.logging
@@ -133,8 +259,15 @@ public enum Avafli {
         )
 
         // Register device in background, then attempt the once-a-day auto-present.
+        // Registration runs in EVERY auto-open mode — it stamps lastSeenAt /
+        // sdk_version / platform (DAU/MAU); the mode only gates the drawer.
         registrationTask = Task {
-            await registerDeviceIfNeeded(configuration: configuration)
+            if let override = registrationOverrideForTests {
+                await override(configuration)
+            } else {
+                await registerDeviceIfNeeded(configuration: configuration)
+            }
+            markBooted()
             await MainActor.run { autoPresentIfEligible() }
             // Launch trigger for the offline retry queue: a pending same-day
             // claim persisted before a crash/kill retries now that the
@@ -152,6 +285,9 @@ public enum Avafli {
             ) { _ in
                 Task {
                     await registrationTask?.value
+                    // Boot resilience: a boot fetch that died on a flaky
+                    // network is re-run now, BEFORE the auto-open check.
+                    await recoverBootIfNeeded()
                     await MainActor.run { autoPresentIfEligible() }
                     // Foreground trigger for the offline retry queue +
                     // buffered-analytics flush.
@@ -181,13 +317,29 @@ public enum Avafli {
         let sdkConfig = cachedSDKConfig
         let giveaway = cachedGiveaway
         let emailConsent = cachedEmailConsent
+        let held = autoOpenHeld
+        let newUser = isNewUserThisSession
         lock.unlock()
 
         guard let config, !suspended, !optedOut else { return }
+        // Host is holding the auto-open (boot flow) — defer; nothing is burned.
+        if held {
+            Logger.shared.log("Auto-present deferred: host is holding auto-open", level: .debug)
+            return
+        }
+        // Effective mode = most restrictive of the server kill switch
+        // (autoOpenEnabled), the server autoOpenMode and the client autoOpen.
         let experience = sdkConfig?.experience
-        guard experience?.autoOpenEnabled ?? true else { return }
+        let mode = AvafliAutoOpen.effective(
+            client: config.autoOpen,
+            serverEnabled: experience?.autoOpenEnabled,
+            serverMode: experience?.resolvedAutoOpenMode ?? .always
+        )
+        guard autoOpenAllowed(mode: mode, isNewUserThisSession: newUser) else {
+            Logger.shared.log("Auto-present skipped: mode \(mode)\(newUser ? " (new user this session)" : "")", level: .debug)
+            return
+        }
         guard giveaway != nil else { return }
-        _ = config
 
         // Once per day.
         let today = Self.dayString(Date())
@@ -214,12 +366,11 @@ public enum Avafli {
         // Don't stack on top of an already-presented experience, and make sure a
         // presenting view controller actually exists — otherwise nothing renders
         // and neither the impression nor the once-per-day flag may be committed.
-        let top = topViewController()
-        if top is AvafliExperienceViewController { return }
-        guard top != nil else {
+        guard let top = topViewController() else {
             Logger.shared.log("Auto-present skipped: no presenting view controller", level: .debug)
             return
         }
+        if top is AvafliExperienceViewController { return }
 
         // Committed to presenting — NOW count the unregistered impression and
         // mark today so a burned impression always corresponds to a real open.
@@ -228,7 +379,26 @@ public enum Avafli {
         }
         defaults.set(today, forKey: lastAutoPresentKey)
         Logger.shared.log("Auto-presenting Avafli experience (first open of the day)", level: .info)
-        present()
+        present(from: top)
+    }
+
+    /// The mode-based part of the auto-open gate (pure; unit-tested).
+    /// `.returningUsersOnly` skips exactly the session in which this device
+    /// registered for the first time; an older backend that never reports
+    /// `isNewUser` leaves the flag false → treated as returning.
+    static func autoOpenAllowed(mode: AvafliAutoOpen, isNewUserThisSession: Bool) -> Bool {
+        switch mode {
+        case .always: return true
+        case .returningUsersOnly: return !isNewUserThisSession
+        case .never: return false
+        }
+    }
+
+    /// A publisher-initiated `present()` writes the once-per-day mark when the
+    /// experience CLOSES (the auto-open writes it when it commits to opening),
+    /// so a later auto-open the same day doesn't double-pop.
+    private static func markAutoPresentedToday() {
+        UserDefaults.standard.set(dayString(Date()), forKey: lastAutoPresentKey)
     }
 
     private static func dayString(_ date: Date) -> String {
@@ -259,12 +429,15 @@ public enum Avafli {
     }
 
     /// Presents the Avafli experience modally from the specified view controller.
-    /// Internal: called only by the SDK's once-per-day auto-open engine.
+    /// Internal: reached by the once-per-day auto-open engine and by the
+    /// public `present()`. `markDayOnClose` is the latter's once-per-day mark
+    /// (written when the experience closes).
     ///
     /// Returns `false` if the SDK is not configured or presentation is suppressed.
     @discardableResult
     static func present(
         from presentingViewController: UIViewController,
+        markDayOnClose: Bool = false,
         completion: ((Result<DailyEntryGrant, AvafliError>) -> Void)? = nil
     ) -> Bool {
         guard let configuration = configuration else {
@@ -326,6 +499,9 @@ public enum Avafli {
         experienceVC.modalPresentationStyle = .overFullScreen
         experienceVC.modalTransitionStyle = .crossDissolve
         experienceVC.view.backgroundColor = .clear
+        if markDayOnClose {
+            experienceVC.onDismiss = { markAutoPresentedToday() }
+        }
 
         presentingViewController.present(experienceVC, animated: true, completion: nil)
         return true
@@ -365,11 +541,13 @@ public enum Avafli {
                         cachedEmailConsent = response.emailConsentStatus
                         cachedAdoptionPending = response.adoptionPending
                         if response.optedOut == true { cachedOptedOut = true }
+                        bootRecoveryPending = false
                         lock.unlock()
                         persistOptOutIfNeeded()
                         prewarmPublisherArt()
                     } catch {
                         handleSuspensionIfNeeded(error)
+                        noteBootFailure(error)
                         Logger.shared.log("Failed to refresh giveaway: \(error)", level: .error)
                     }
                     return
@@ -387,11 +565,13 @@ public enum Avafli {
                     cachedEmailConsent = response.emailConsentStatus
                     cachedAdoptionPending = response.adoptionPending
                     if response.optedOut == true { cachedOptedOut = true }
+                    bootRecoveryPending = false
                     lock.unlock()
                     persistOptOutIfNeeded()
                     prewarmPublisherArt()
                 } catch {
                     handleSuspensionIfNeeded(error)
+                    noteBootFailure(error)
                     Logger.shared.log("Failed to refresh giveaway: \(error)", level: .error)
                 }
                 return
@@ -431,14 +611,19 @@ public enum Avafli {
             cachedSDKConfig = response.sdkConfig
             cachedAdoptionPending = response.adoptionPending
             if response.optedOut == true { cachedOptedOut = true }
+            // First-ever registration of this device → `.returningUsersOnly`
+            // skips this session's auto-open. Absent (older backend) → returning.
+            isNewUserThisSession = response.isNewUser == true
+            bootRecoveryPending = false
             lock.unlock()
             persistOptOutIfNeeded()
             prewarmPublisherArt()
 
-            Logger.shared.log("Device registered: \(response.uuid)", level: .info)
+            Logger.shared.log("Device registered: \(response.uuid)\(response.isNewUser == true ? " (new user)" : "")", level: .info)
             AvafliOfflineResilience.shared?.coordinator.clear(.registration)
         } catch {
             handleSuspensionIfNeeded(error)
+            noteBootFailure(error)
             Logger.shared.log("Device registration failed: \(error)", level: .error)
             // NETWORK-class failure (offline/timeout): queue a same-day retry
             // on connectivity regain / foreground / capped backoff. Backend
@@ -448,6 +633,39 @@ public enum Avafli {
             }
             // SDK gracefully degrades — will use cached data
         }
+    }
+
+    // MARK: - Boot resilience
+
+    /// A NETWORK-class boot failure (offline / timeout / connection dropped)
+    /// is re-run on the next foreground; backend rejections are not — they'd
+    /// only be rejected again.
+    private static func noteBootFailure(_ error: Error) {
+        guard AvafliNetworkErrorClassifier.isRetriable(error) else { return }
+        lock.lock()
+        bootRecoveryPending = true
+        lock.unlock()
+    }
+
+    private static func markBooted() {
+        lock.lock()
+        hasBooted = true
+        lock.unlock()
+    }
+
+    /// The configuration to re-run a failed boot with, or nil when nothing is pending.
+    private static func pendingBootRecoveryConfiguration() -> AvafliConfiguration? {
+        lock.lock(); defer { lock.unlock() }
+        return bootRecoveryPending ? configuration : nil
+    }
+
+    /// Re-runs the registration / giveaway fetch after a failed boot (the
+    /// foreground trigger). `registerDeviceIfNeeded` picks the right leg —
+    /// token refresh, giveaway refresh or a fresh registerDevice.
+    private static func recoverBootIfNeeded() async {
+        guard let config = pendingBootRecoveryConfiguration() else { return }
+        Logger.shared.log("Boot fetch failed earlier — retrying on foreground", level: .info)
+        await registerDeviceIfNeeded(configuration: config)
     }
 
     // MARK: - Offline retry execution
@@ -478,7 +696,12 @@ public enum Avafli {
         switch kind {
         case .registration:
             await registerDeviceIfNeeded(configuration: configuration)
-            return KeychainStorage().loadToken() != nil ? .success : .retriableFailure
+            guard KeychainStorage().loadToken() != nil else { return .retriableFailure }
+            // The boot that failed never reached the auto-open check — run it
+            // now that the session exists (a backgrounded app has no
+            // foreground-active scene and simply skips, burning nothing).
+            await MainActor.run { autoPresentIfEligible() }
+            return .success
 
         case .claim:
             let keychain = KeychainStorage()
@@ -611,8 +834,15 @@ public enum Avafli {
         )
     }
 
+    /// Single-flight: concurrent callers share ONE refresh (see `tokenRefreshGate`).
     @discardableResult
     private static func refreshTokenIfNeeded(configuration: AvafliConfiguration, keychain: KeychainStorage) async -> String? {
+        await tokenRefreshGate.run {
+            await performTokenRefresh(configuration: configuration, keychain: keychain)
+        }
+    }
+
+    private static func performTokenRefresh(configuration: AvafliConfiguration, keychain: KeychainStorage) async -> String? {
         guard let refreshToken = keychain.loadRefreshToken() else {
             Logger.shared.log("No refresh token available", level: .debug)
             return nil
@@ -765,5 +995,32 @@ public enum Avafli {
     }
     static func _resetEmailConsentForTests() {
         lock.lock(); cachedEmailConsent = nil; lock.unlock()
+    }
+    /// Replaces the network registration step of `configure(_:)` (nil restores it).
+    static func _setRegistrationOverrideForTests(_ override: ((AvafliConfiguration) async -> Void)?) {
+        lock.lock(); registrationOverrideForTests = override; lock.unlock()
+    }
+    static func _awaitRegistrationForTests() async {
+        await _registrationTaskForTests()?.value
+    }
+    private static func _registrationTaskForTests() -> Task<Void, Never>? {
+        lock.lock(); defer { lock.unlock() }
+        return registrationTask
+    }
+    static func _isAutoOpenHeldForTests() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return autoOpenHeld
+    }
+    static func _resetPresentationStateForTests() {
+        lock.lock()
+        configuration = nil
+        registrationTask = nil
+        cachedGiveaway = nil
+        cachedSDKConfig = nil
+        autoOpenHeld = false
+        isNewUserThisSession = false
+        hasBooted = false
+        bootRecoveryPending = false
+        lock.unlock()
     }
 }

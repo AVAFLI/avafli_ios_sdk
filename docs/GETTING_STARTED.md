@@ -32,14 +32,14 @@ The SDK uses SwiftUI for its presentation layer and requires a UIKit host app (U
    ```
    https://github.com/AVAFLI/avafli_ios_sdk.git
    ```
-3. Set the dependency rule to **Up to Next Major Version** from `3.1.1`
+3. Set the dependency rule to **Up to Next Major Version** from `3.1.4`
 4. Add the `AvafliSDK` library to your app target
 
 Or in `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.1.1")
+    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.1.4")
 ]
 ```
 
@@ -85,7 +85,7 @@ Auto-open behavior:
 - Unregistered users (no confirmed email) see at most 3 auto-opens, then the SDK goes quiet until they register.
 - Users who opted out (Right-to-Delete) never see the experience again.
 
-The auto-open is the only way the experience appears — there is no manual launch API. One call, and the experience opens itself once per day.
+One call, and the experience opens itself once per day. If your app needs to decide the moment, see [Controlling when the drawer opens](#controlling-when-the-drawer-opens) below.
 
 > **Email:** If your app has an authenticated session, pass the user's email via `AvafliUser(email:)`. The capture screen then shows that address pre-filled and **locked** (read-only) — Avafli links accounts across devices by email, so a partner-authenticated address is the most reliable identity. Consent remains an explicit act inside the Avafli flow: the user still sees the address, ticks the age (and optionally marketing) boxes, and submits. A malformed email is ignored and the field stays editable. If your app has no signed-in user, pass `AvafliUser.guest` — the SDK mints a stable per-install guest id and captures email through its own consent UI.
 >
@@ -95,6 +95,33 @@ The auto-open is the only way the experience appears — there is no manual laun
 > partner emails skip it), and a brand-new typed address gets a soft "verify
 > your email" chip on the dashboard — it never blocks daily play, only
 > prize-draw eligibility.
+
+### Controlling when the drawer opens
+
+The default is unchanged: the drawer opens itself once a day on app open. Three controls change that when you need to:
+
+- **`autoOpen` on the configuration** — `.always` (default), `.returningUsersOnly`, or `.never`. `.returningUsersOnly` keeps the drawer out of a first-time user's onboarding: it skips the auto-open on the launch where the device is first registered, then auto-opens normally on every later launch. `.never` means the SDK never auto-opens and you call `Avafli.present()`.
+- **`Avafli.present()`** — open the drawer from a button, a screen, or an onboarding-complete handler. It ignores the once-a-day rule and the impression cap, waits for registration if it is still in flight, and no-ops if the drawer is already open or the user has opted out. Returns `false` when there is nothing to show; the completion receives the `DailyEntryGrant` once today's entry is claimed.
+- **`Avafli.holdAutoOpen()` / `Avafli.releaseAutoOpen()`** — for boot flows. Call `holdAutoOpen()` before configuring to defer the daily auto-open (nothing is burned — no once-a-day mark, no impression), and `releaseAutoOpen()` once your main screen is ready; it re-runs the eligibility check immediately. `present()` still works while held.
+
+```swift
+let config = AvafliConfiguration(
+    apiKey: "YOUR_API_KEY",
+    bundleId: "com.example.myapp",
+    user: AvafliUser(id: "user_123"),
+    autoOpen: .never   // .always (default) | .returningUsersOnly | .never
+)
+Avafli.configure(config)
+
+// Later — e.g. from your onboarding-complete handler
+func onboardingDidComplete() {
+    Avafli.present { result in
+        // .success(grant) once today's entry is claimed; .failure(error) otherwise
+    }
+}
+```
+
+Registration and analytics (DAU/MAU) run on configure regardless of mode.
 
 ---
 
