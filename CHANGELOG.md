@@ -1,6 +1,89 @@
 # Changelog
 
 
+## 3.2.0 — 2026-09-29
+
+### Added
+
+- **Prize claims: a six-digit code before the claim form.** Official Rules
+  §7 — nobody receives a prize until they prove they control the inbox on
+  file. When the backend's `prizeClaim.verification.required` is true, the
+  winner splash's CONTINUE opens a code screen (the existing code-entry
+  screen, with the masked address from the block) before the claim form:
+  the code is requested on open (`sendClaimVerificationCode`, idempotent —
+  a live code is re-used), the field auto-submits on the sixth digit and
+  offers the system one-time-code autofill, and "Send a new code" is
+  disabled with a live countdown until the server's `resendAvailableAt`.
+  Winners who proved the inbox earlier go straight to the form. Nothing for
+  the host app to do.
+- **The server holds all state for the step.** The SDK persists nothing
+  about it: a winner who closes the drawer, kills the app, switches device
+  or reinstalls resumes from the fresh `prizeClaim` block — the code screen
+  with the live code, a fresh code if it expired, or the form if already
+  verified.
+- **Every failure has a next action on screen.** A wrong code shows the
+  tries left and empties the field; a dead code (expired / out of tries)
+  is replaced by the server and announced as information, not an error; a
+  failed send is inline with Retry and leaves the field usable; rate limits
+  drive the resend countdown; a network failure keeps what was typed; an
+  expired or withdrawn claim leaves the claim flow. The help line
+  "Can't get to this email? Contact info@avafli.com" is always there.
+- `submitPrizeClaim` now sends `supportsClaimVerification: true`. If the
+  server answers `claim_verification_required`, every field the person
+  typed is kept in memory through the code step and restored on the form.
+- **Rejoin 24 hours after "Delete my data"** (Rules §9, Terms §5.2,
+  Privacy §6). The cached opt-out now carries the moment it lifts
+  (`optedOutUntil` from the server; this device's clock + 24 hours when the
+  SDK performed the delete or the flag was cached by an older build). Once
+  that moment has passed, `configure(_:)` and the next foreground clear the
+  opt-out and every piece of the old session — auth and refresh tokens,
+  user id, email-submitted flag, cached giveaway / streak / claim state,
+  the once-per-day auto-open mark, the unregistered impression counter and
+  the adoption stamps — and register the device as a brand-new participant.
+  Before that moment nothing changes (`present()` stays a no-op). If the
+  server still reports the opt-out, its time is adopted and the next try
+  waits for it — never a loop.
+
+- **Winners can always reopen a pending claim.** While the latest
+  `registerDevice` / `getActiveGiveaway` response carries a pending
+  `prizeClaim`, the auto-open is no longer held back by the once-per-day
+  mark, the unregistered impression cap (no impression is counted) or
+  `returningUsersOnly`. It opens on every cold launch, and on a foreground
+  when 30 minutes have passed since the claim was last on screen (its own
+  timestamp, `winr_last_claim_auto_present_<bundleId>`; a device clock set
+  back behind it counts as expired). `holdAutoOpen()`, opt-out, suspension,
+  the server kill switch and mode `never` are still respected — on `never`
+  the publisher opens the winner flow with `Avafli.present()`. The drawer
+  keeps the flag current (every `getActiveGiveaway` it receives, a
+  submitted claim, a claim rejected as not the winner / already submitted /
+  expired), so a submitted claim is back on the normal once-per-day rule.
+- **A pending claim opens the drawer with no giveaway running.** A winner is
+  drawn after their giveaway has ended; the auto-open and `present()` now
+  open for the claim alone, the winner flow takes its prize text from the
+  claim, and leaving it (close, the submitted confirmation, a claim that
+  turned out expired or unavailable) dismisses the drawer instead of
+  painting a dashboard or an empty state. Offline, it shows a connection
+  message with RETRY.
+
+### Changed
+
+- The delete confirmation now reads: "This permanently erases your
+  information and ends your participation. Entries and streaks are
+  forfeited and cannot be restored. You can join again as a new participant
+  after 24 hours."
+- Callable error `details` (the machine-readable `reason` and its fields)
+  now reach the prize-claim flow. Every other call sees exactly the errors
+  it always has.
+
+### Compatibility
+
+- With no `prizeClaim.verification` block (an older backend, or the platform
+  flag off) the claim flow is unchanged. No public API was added or changed.
+- With no pending claim the auto-open and `present()` behave exactly as in
+  3.1.4, including "no giveaway → nothing opens".
+- A claim rejected on submit because its window expired or it was withdrawn
+  now leaves the claim flow (it used to show a generic inline error).
+
 ## 3.1.4 — 2026-09-24
 
 ### Added

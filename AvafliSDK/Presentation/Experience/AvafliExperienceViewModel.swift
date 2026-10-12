@@ -198,6 +198,10 @@ final class AvafliExperienceViewModel: ObservableObject {
     /// Sub-screen of the winner claim flow (`state == .winnerClaim`).
     enum WinnerClaimStep: Equatable {
         case splash
+        /// Email-ownership step (3.2.0): the six-digit code sent to the
+        /// address on file, entered before the claim form opens. Shown only
+        /// when `prizeClaim.verification.required` is true.
+        case verifyCode
         case form
         /// Post-submit "Please share a little" screen (2.9) — the claim is
         /// already on the backend, so closing here loses nothing.
@@ -247,6 +251,54 @@ final class AvafliExperienceViewModel: ObservableObject {
     /// Set after a "Not the winner"/"Already submitted" rejection so the next
     /// load skips the winner flow and lands on the normal dashboard.
     private var suppressWinnerClaim = false
+
+    // Claim email-ownership step (3.2.0). Everything below is MEMORY ONLY —
+    // the server holds the state of this step, and a reopened drawer reads it
+    // back from the fresh prizeClaim block.
+
+    /// The inline status of the code send on the claim code screen.
+    enum ClaimCodeSendStatus: Equatable {
+        case idle
+        /// "Sending your code…"
+        case sending
+        /// "Code sent" — a code was actually emailed by this call.
+        case sent
+        /// The send failed: shown inline with a Retry action. The code field
+        /// stays usable (a code from an earlier send may be in the inbox).
+        case failed(String)
+    }
+
+    /// The inline message under the claim code field.
+    enum ClaimCodeNotice: Equatable {
+        case error(String)
+        /// Not the person's mistake (a fresh code is on its way, a cooldown
+        /// is running) — never styled as an error.
+        case info(String)
+    }
+
+    @Published private(set) var claimCodeSendStatus: ClaimCodeSendStatus = .idle
+    @Published private(set) var claimCodeNotice: ClaimCodeNotice?
+    /// Spinner state for the code screen's VERIFY pill.
+    @Published private(set) var isConfirmingClaimCode = false
+    /// The brief "Email verified ✓" beat before the claim form opens.
+    @Published private(set) var claimCodeVerified = false
+    /// "Send a new code" stays disabled (with a countdown) until this moment.
+    @Published private(set) var claimResendAvailableAt: Date?
+    /// Bumped whenever the code field must be emptied (mismatch, fresh code).
+    @Published private(set) var claimCodeClearCount = 0
+    /// What the person typed into the claim form, kept when the server sends
+    /// them back to the code screen mid-submit (`claim_verification_required`).
+    private(set) var preservedClaimForm: AvafliPrizeClaimForm?
+    /// One send at a time — reopening the code screen joins the one in flight.
+    private var claimCodeSendInFlight = false
+    /// The response that put the winner flow up carried NO giveaway (it has
+    /// ended; the next one hasn't started). There is nothing to show behind
+    /// the winner flow then — leaving it dismisses the drawer.
+    private var winnerFlowHasNoGiveaway = false
+    /// How long the verified confirmation holds before the form opens.
+    var claimVerifiedHold: TimeInterval = 0.9
+    /// The clock the resend countdown runs on (tests substitute their own).
+    var now: () -> Date = Date.init
 
     /// Prefill for the claim form (host-app-provided identity).
     var claimFormPrefill: AvafliPrizeClaimForm {
@@ -467,6 +519,11 @@ final class AvafliExperienceViewModel: ObservableObject {
             return
         }
 
+        // Opened for a pending prize claim with no giveaway running: the
+        // winner splash is the first real frame — never the dashboard of a
+        // giveaway that has ended, painted from the device's cache.
+        if opensForClaimWithoutGiveaway { return }
+
         guard AvafliV2CacheRender.canHydrate(
             giveaway: giveaway,
             streak: stored,
@@ -532,6 +589,9 @@ final class AvafliExperienceViewModel: ObservableObject {
                 if let claim = response.prizeClaim, claim.isPending, !suppressWinnerClaim {
                     pendingPrizeClaim = claim
                 }
+                // The auto-open keeps a pending claim reachable (3.2.0) — tell
+                // it what this response said.
+                Avafli.notePendingPrizeClaim(pendingPrizeClaim != nil)
 
                 // Check if backend returned no active giveaway. (A pending prize
                 // claim can outlive its giveaway — the winner flow still shows.)
@@ -549,7 +609,14 @@ final class AvafliExperienceViewModel: ObservableObject {
                     try? storage.save(giveaway, for: giveawayCacheKey)
                     // Keep the prize art warm across prize changes mid-session.
                     AvafliV2ImageWarmer.prewarm(giveaway.prizeImageUrl)
+                } else {
+                    // Only the claim is left: the giveaway it came from has
+                    // ended. The winner flow takes its prize text from the
+                    // prizeClaim block.
+                    activeGiveaway = nil
+                    try? storage.remove(for: giveawayCacheKey)
                 }
+                winnerFlowHasNoGiveaway = response.giveaway == nil
                 backendClaimedToday = response.claimedToday
                 backendStreakDay = response.streakDay
                 cachedBackendMonthlyCurrent = response.monthlyCurrent
@@ -594,6 +661,14 @@ final class AvafliExperienceViewModel: ObservableObject {
                     state = .error(.authenticationRequired)
                     return
                 }
+                // Opened for a pending claim, no giveaway to fall back on and
+                // no answer from the server: say so, with a retry — never a
+                // blank drawer, never a dashboard made up from the cache.
+                if opensForClaimWithoutGiveaway {
+                    Logger.shared.log("Pending claim could not be loaded: \(error)", level: .error)
+                    state = .error(.network(error))
+                    return
+                }
                 // Offline fallback: use cached giveaway
                 if activeGiveaway == nil {
                     activeGiveaway = try? storage.load(GiveawayConfig.self, for: giveawayCacheKey)
@@ -610,6 +685,7 @@ final class AvafliExperienceViewModel: ObservableObject {
             if let claim = pendingPrizeClaim {
                 winnerClaimStep = .splash
                 state = .winnerClaim(claim)
+                Avafli.notePendingPrizeClaim(true, onScreen: true)
                 container.analytics?.track(
                     event: "avafli_winner_claim_shown",
                     properties: ["giveaway_id": claim.giveawayId]
@@ -1457,6 +1533,20 @@ final class AvafliExperienceViewModel: ObservableObject {
         dashboardNotice = nil
     }
 
+    /// The drawer was opened for a pending prize claim and the SDK knows of
+    /// no running giveaway (see `Avafli.autoPresentPendingClaim`).
+    private var opensForClaimWithoutGiveaway: Bool {
+        container.pendingPrizeClaim && container.cachedGiveaway == nil && !suppressWinnerClaim
+    }
+
+    /// RETRY on the connection state (a pending claim that could not be
+    /// loaded): ask the server again.
+    @MainActor
+    func retryLoad() {
+        state = .loading
+        Task { [weak self] in await self?.load() }
+    }
+
     /// RETRY on the session-expired state: run the registration handshake
     /// again (refresh if possible, else a fresh register) and reload.
     @MainActor
@@ -1511,11 +1601,271 @@ final class AvafliExperienceViewModel: ObservableObject {
         }
     }
 
-    /// Splash CONTINUE → the claim form.
+    /// Splash CONTINUE → the claim form, or the code screen first when the
+    /// server says this person still has to prove the inbox on file. No
+    /// `verification` block (older backend / flag off) is today's flow.
     @MainActor
     func winnerClaimContinue() {
-        guard case .winnerClaim = state else { return }
-        winnerClaimStep = .form
+        guard case let .winnerClaim(claim) = state else { return }
+        if claim.verification?.required == true {
+            openClaimCodeScreen(for: claim)
+        } else {
+            winnerClaimStep = .form
+        }
+    }
+
+    // MARK: - Claim email-ownership step (3.2.0)
+
+    /// Shows the code screen and asks the backend for a code. The ask is
+    /// idempotent (no `resend`): a live code is re-used, not replaced.
+    @MainActor
+    private func openClaimCodeScreen(for claim: PrizeClaimBlock) {
+        claimCodeNotice = nil
+        claimCodeVerified = false
+        claimCodeSendStatus = claimCodeSendInFlight ? .sending : .idle
+        claimResendAvailableAt = Self.claimResendDate(from: claim.verification, now: now(), justSent: false)
+        winnerClaimStep = .verifyCode
+        sendClaimCode(resend: false)
+    }
+
+    /// Back from the code screen → the splash. Nothing is re-sent and nothing
+    /// is invalidated; CONTINUE picks the step up again.
+    @MainActor
+    func winnerClaimCodeBack() {
+        guard winnerClaimStep == .verifyCode else { return }
+        winnerClaimStep = .splash
+    }
+
+    /// "Send a new code". A no-op while the cooldown is still running.
+    @MainActor
+    func resendClaimCode() {
+        if let availableAt = claimResendAvailableAt, now() < availableAt { return }
+        sendClaimCode(resend: true)
+    }
+
+    /// Retry after a failed send.
+    @MainActor
+    func retryClaimCodeSend() {
+        sendClaimCode(resend: false)
+    }
+
+    /// Seconds until "Send a new code" is available again (0 = available).
+    func claimResendSecondsRemaining(at date: Date) -> Int {
+        guard let availableAt = claimResendAvailableAt else { return 0 }
+        return max(0, Int(availableAt.timeIntervalSince(date).rounded(.up)))
+    }
+
+    /// When the resend cooldown ends, on THIS device's clock. For a code that
+    /// was just sent the 60 seconds are counted from now, so a device clock
+    /// that disagrees with the server's can't stretch or skip the cooldown.
+    static func claimResendDate(from block: ClaimVerificationBlock?, now: Date, justSent: Bool) -> Date? {
+        guard let block, block.required,
+              let resendAt = block.resendAvailableAt.flatMap(AvafliClaimDates.parseISO) else { return nil }
+        let sentAt = block.codeSentAt.flatMap(AvafliClaimDates.parseISO)
+        let cooldown = max(0, sentAt.map { resendAt.timeIntervalSince($0) } ?? 60)
+        if justSent { return now.addingTimeInterval(cooldown) }
+        return min(resendAt, now.addingTimeInterval(cooldown))
+    }
+
+    @MainActor
+    private func sendClaimCode(resend: Bool) {
+        guard case let .winnerClaim(claim) = state, !claimCodeSendInFlight else { return }
+        claimCodeSendInFlight = true
+        claimCodeSendStatus = .sending
+        if resend { claimCodeNotice = nil }
+
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let response = try await container.network.send(
+                    SendClaimVerificationCodeRequest(giveawayId: claim.giveawayId, resend: resend)
+                )
+                claimCodeSendInFlight = false
+                if let verification = response.verification {
+                    adoptClaimVerification(verification, justSent: response.sent)
+                    if !verification.required {
+                        // Proven in the meantime (another device, an earlier
+                        // code) — there is nothing to enter.
+                        claimCodeSendStatus = .idle
+                        if winnerClaimStep == .verifyCode { winnerClaimStep = .form }
+                        return
+                    }
+                }
+                // A re-used live code shows nothing extra.
+                claimCodeSendStatus = response.sent ? .sent : .idle
+            } catch {
+                claimCodeSendInFlight = false
+                Logger.shared.log("Claim code send failed: \(error)", level: .error)
+                claimCodeSendStatus = .idle
+                await handleClaimCodeFailure(error, duringSend: true)
+            }
+        }
+    }
+
+    /// Submit the six digits. Success → a brief confirmation → the claim form
+    /// (with whatever the person had already typed into it).
+    @MainActor
+    func confirmClaimCode(_ code: String) {
+        guard case let .winnerClaim(claim) = state, !isConfirmingClaimCode else { return }
+        isConfirmingClaimCode = true
+        claimCodeNotice = nil
+
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let response = try await container.network.send(
+                    ConfirmClaimVerificationCodeRequest(giveawayId: claim.giveawayId, code: code)
+                )
+                guard response.verified else {
+                    isConfirmingClaimCode = false
+                    claimCodeNotice = .error(AvafliV2Strings.claimCodeMismatch(attemptsRemaining: nil))
+                    claimCodeClearCount += 1
+                    return
+                }
+                // The rest of the session must not re-ask.
+                adoptClaimVerification(ClaimVerificationBlock(required: false), justSent: false)
+                claimCodeSendStatus = .idle
+                claimCodeVerified = true
+                // VERIFY stays busy through the confirmation beat, so the
+                // accepted code can't be submitted a second time.
+                try? await Task.sleep(nanoseconds: UInt64(claimVerifiedHold * 1_000_000_000))
+                claimCodeVerified = false
+                isConfirmingClaimCode = false
+                if winnerClaimStep == .verifyCode { winnerClaimStep = .form }
+            } catch {
+                isConfirmingClaimCode = false
+                Logger.shared.log("Claim code check failed: \(error)", level: .error)
+                await handleClaimCodeFailure(error, duringSend: false)
+            }
+        }
+    }
+
+    /// Mirrors the server's verification state into the in-memory block (and
+    /// restarts the resend countdown from it).
+    @MainActor
+    private func adoptClaimVerification(_ verification: ClaimVerificationBlock, justSent: Bool) {
+        guard case var .winnerClaim(claim) = state else { return }
+        claim.verification = verification
+        state = .winnerClaim(claim)
+        claimResendAvailableAt = Self.claimResendDate(from: verification, now: now(), justSent: justSent)
+    }
+
+    /// Every failure of the code step ends on something the person can do
+    /// next: try again, ask for a new code, or write to the contact address.
+    @MainActor
+    private func handleClaimCodeFailure(_ error: Error, duringSend: Bool) async {
+        if let failure = error as? AvafliCallableFailure {
+            switch failure.reason {
+            case "code_mismatch":
+                claimCodeNotice = .error(AvafliV2Strings.claimCodeMismatch(attemptsRemaining: failure.attemptsRemaining))
+                claimCodeClearCount += 1
+            case "fresh_code_sent":
+                // The old code was dead and the server has ALREADY emailed a
+                // new one — its message says which (expired / out of tries).
+                let message = failure.message.trimmingCharacters(in: .whitespacesAndNewlines)
+                claimCodeNotice = .info(message.isEmpty ? AvafliV2Strings.claimCodeFreshSent : message)
+                claimCodeClearCount += 1
+                if let verification = failure.verification {
+                    adoptClaimVerification(verification, justSent: true)
+                }
+            case "resend_cooldown":
+                claimCodeNotice = .info(AvafliV2Strings.claimCodeResendCooldown(seconds: failure.retryAfterSeconds))
+                followRetryAfter(failure.retryAfterSeconds)
+            case "send_limit":
+                claimCodeNotice = .info(AvafliV2Strings.claimCodeSendLimit)
+                followRetryAfter(failure.retryAfterSeconds)
+            case "send_failed":
+                claimCodeSendStatus = .failed(AvafliV2Strings.claimCodeSendFailed)
+            case "no_email_on_file":
+                claimCodeSendStatus = .failed(AvafliV2Strings.claimCodeNoEmailOnFile)
+            default:
+                if Self.isClaimStateRejection(failure) {
+                    // The claim window expired / the claim is no longer
+                    // available: the code screen has nothing left to offer.
+                    await leaveWinnerClaimFlow(because: failure.message)
+                } else if !duringSend, failure.status == "INVALID_ARGUMENT" {
+                    claimCodeNotice = .error(AvafliV2Strings.claimCodeMismatch(attemptsRemaining: nil))
+                    claimCodeClearCount += 1
+                } else {
+                    showClaimCodeUnreachable(duringSend: duringSend)
+                }
+            }
+            return
+        }
+        if case AvafliError.geoBlocked = error {
+            state = .error(.geoBlocked)
+        } else if case AvafliError.authenticationRequired = error, hasRegistered {
+            // Dead session (or no longer the winner): the retry state
+            // re-registers and reloads, which lands on the truth either way.
+            state = .error(.authenticationRequired)
+        } else if case AvafliError.serviceUnavailable = error {
+            state = .error(.serviceUnavailable)
+        } else {
+            showClaimCodeUnreachable(duringSend: duringSend)
+        }
+    }
+
+    /// Network-class failure. A failed SEND is retryable inline; a failed
+    /// CHECK keeps what the person typed so VERIFY can simply be tapped again.
+    @MainActor
+    private func showClaimCodeUnreachable(duringSend: Bool) {
+        if duringSend {
+            claimCodeSendStatus = .failed(AvafliV2Strings.claimCodeUnreachable)
+        } else {
+            claimCodeNotice = .error(AvafliV2Strings.claimCodeUnreachable)
+        }
+    }
+
+    /// The resend countdown follows the server's `retryAfterSeconds`.
+    @MainActor
+    private func followRetryAfter(_ seconds: Int?) {
+        guard let seconds, seconds > 0 else { return }
+        claimResendAvailableAt = now().addingTimeInterval(TimeInterval(seconds))
+    }
+
+    /// The claim can no longer be made (expired / withdrawn). Same exit as a
+    /// stale winner state: reload without the winner flow.
+    @MainActor
+    private func leaveWinnerClaimFlow(because reason: String) async {
+        Logger.shared.log("Prize claim unavailable (\(reason)) — leaving the claim flow", level: .info)
+        suppressWinnerClaim = true
+        preservedClaimForm = nil
+        // Not pending any more: the auto-open must not bring it back.
+        Avafli.notePendingPrizeClaim(false)
+        if winnerFlowHasNoGiveaway {
+            // Nothing is running behind the winner flow — close the drawer
+            // rather than paint a dashboard or an empty state.
+            requestDismiss()
+            return
+        }
+        state = .loading
+        await load()
+    }
+
+    /// A claim the server will not take any more: not the winner, already
+    /// submitted, or the claim window expired / the claim was withdrawn.
+    static func isClaimNoLongerAvailable(_ error: Error) -> Bool {
+        let message = "\(error)"
+        if message.contains("Not the winner") || message.contains("Already submitted") { return true }
+        if let failure = error as? AvafliCallableFailure {
+            return isClaimStateRejection(failure)
+        }
+        return false
+    }
+
+    /// The claim itself is the problem: its window expired, it was withdrawn,
+    /// or it is not open. The backend tags these `claim_expired` /
+    /// `claim_unavailable` / `claim_not_open`; one deployed before the tags
+    /// sends the same `failed-precondition` with no reason at all.
+    static func isClaimStateRejection(_ failure: AvafliCallableFailure) -> Bool {
+        switch failure.reason {
+        case "claim_expired", "claim_unavailable", "claim_not_open":
+            return true
+        case nil:
+            return failure.status == "FAILED_PRECONDITION"
+        default:
+            return false
+        }
     }
 
     /// DONE on the post-submit share screen → the confirmation screen.
@@ -1523,6 +1873,12 @@ final class AvafliExperienceViewModel: ObservableObject {
     func winnerShareDone() {
         guard case let .share(claimNumber, submittedAt) = winnerClaimStep else { return }
         winnerClaimStep = .confirmation(claimNumber: claimNumber, submittedAt: submittedAt)
+    }
+
+    /// DONE on the submitted confirmation → the experience closes.
+    @MainActor
+    func winnerConfirmationDone() {
+        requestDismiss()
     }
 
     /// One-shot guard so the story is attached at most once (the share screen
@@ -1595,6 +1951,9 @@ final class AvafliExperienceViewModel: ObservableObject {
                 ))
                 isSubmittingClaim = false
                 submittedClaimForm = form
+                preservedClaimForm = nil
+                // Submitted: the normal once-per-day rule applies again.
+                Avafli.notePendingPrizeClaim(false)
                 // 2.9: the share step comes AFTER submit — the claim is safe,
                 // so closing the share screen loses nothing.
                 winnerClaimStep = .share(
@@ -1607,14 +1966,22 @@ final class AvafliExperienceViewModel: ObservableObject {
                 )
             } catch {
                 isSubmittingClaim = false
-                let message = "\(error)"
-                if message.contains("Not the winner") || message.contains("Already submitted") {
-                    // Stale/duplicate winner state — never trap the user in the
-                    // claim flow. Fall back to the normal dashboard silently.
-                    Logger.shared.log("Prize claim rejected (\(message)) — falling back to dashboard", level: .info)
-                    suppressWinnerClaim = true
-                    state = .loading
-                    await load()
+                if let failure = error as? AvafliCallableFailure,
+                   failure.reason == "claim_verification_required" {
+                    // The state changed underneath us (the block said the
+                    // inbox was proven, the server disagrees). Keep every
+                    // field in memory, take the code step, come back.
+                    Logger.shared.log("Prize claim needs the email code first — routing to the code screen", level: .info)
+                    preservedClaimForm = form
+                    adoptClaimVerification(ClaimVerificationBlock(required: true), justSent: false)
+                    openClaimCodeScreen(for: claim)
+                    return
+                }
+                if Self.isClaimNoLongerAvailable(error) {
+                    // Stale/duplicate/expired winner state — never trap the
+                    // user in the claim flow. Fall back to the normal
+                    // dashboard silently (or close, when nothing is running).
+                    await leaveWinnerClaimFlow(because: "\(error)")
                     return
                 }
                 Logger.shared.log("Prize claim submit failed: \(error)", level: .error)

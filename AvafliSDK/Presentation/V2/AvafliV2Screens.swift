@@ -121,6 +121,9 @@ struct AvafliV2ExperienceRoot: View {
                     geoBlockedState
                 case .authenticationRequired:
                     sessionExpiredState
+                case .network:
+                    // A pending prize claim that could not be loaded.
+                    connectionRetryState
                 default:
                     emptyState
                 }
@@ -277,6 +280,7 @@ struct AvafliV2ExperienceRoot: View {
                     appName: viewModel.sdkConfig?.appName,
                     shareUrl: viewModel.sdkConfig?.shareUrl,
                     placesApiKey: viewModel.sdkConfig?.placesApiKey,
+                    rulesUrl: rulesUrl,
                     claim: claim
                 )
             case .milestoneCelebration:
@@ -348,6 +352,31 @@ struct AvafliV2ExperienceRoot: View {
             }
             .frame(width: 220)
             .padding(.top, 12)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// The drawer opened for a pending prize claim and the server could not
+    /// be reached. RETRY asks again; same layout as the session-expired state.
+    private var connectionRetryState: some View {
+        VStack(spacing: 12) {
+            Text(AvafliV2Strings.claimCodeUnreachable)
+                .font(AvafliV2Font.inter(20, .bold))
+                .foregroundColor(.white)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 34)
+            AvafliV2PillButton(accent: accent, title: AvafliV2Strings.sessionExpiredRetry) {
+                viewModel.retryLoad()
+            }
+            .frame(width: 220)
+            .padding(.top, 12)
+            Button(action: { viewModel.requestDismiss() }) {
+                Text(AvafliV2Strings.closeLowercase)
+                    .font(AvafliV2Font.inter(14))
+                    .foregroundColor(AvafliV2Color.textTertiary)
+                    .underline()
+            }
+            .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -1148,6 +1177,29 @@ struct AvafliV2OptOutDialog: View {
 }
 
 
+/// What the prize-claim email-ownership step (3.2.0) adds to the code-entry
+/// screen: the inline send status, a non-error notice, the resend countdown,
+/// the help line and a Back to the winner splash. Absent (nil) on the
+/// adoption / soft-verification uses, which render exactly as before.
+struct AvafliV2ClaimCodeExtras {
+    let sendStatus: AvafliExperienceViewModel.ClaimCodeSendStatus
+    let infoText: String?
+    /// The brief confirmation before the claim form opens.
+    let verified: Bool
+    let resendAvailableAt: Date?
+    /// Changes whenever the field must be emptied (mismatch, fresh code).
+    let clearCount: Int
+    var now: () -> Date = Date.init
+    let onRetrySend: () -> Void
+    let onBack: () -> Void
+
+    /// Seconds left on the resend cooldown at `date` (0 = available).
+    func resendSecondsRemaining(at date: Date) -> Int {
+        guard let resendAvailableAt else { return 0 }
+        return max(0, Int(resendAvailableAt.timeIntervalSince(date).rounded(.up)))
+    }
+}
+
 /// Verification code entry — shown when the typed email matches an EXISTING
 /// account and the OTP gate is on. One numeric field, auto-submits at 6 digits.
 struct AvafliV2CodeEntryView: View {
@@ -1165,9 +1217,12 @@ struct AvafliV2CodeEntryView: View {
     let onResend: () -> Void
     let onInfo: () -> Void
     let onClose: () -> Void
+    /// Prize-claim email-ownership step only (3.2.0); nil everywhere else.
+    var claim: AvafliV2ClaimCodeExtras? = nil
 
     @State private var code = ""
     @FocusState private var codeFocused: Bool
+    @Environment(\.openURL) private var openURL
 
     private static let codeAnchor = "avafli-code-field"
 
@@ -1184,8 +1239,19 @@ struct AvafliV2CodeEntryView: View {
             ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 18) {
-                    AvafliV2Header(logoUrl: logoUrl, onInfo: onInfo, onClose: onClose)
+                    if let claim {
+                        // Inside the claim flow: its header (Back / logo / X).
+                        AvafliClaimStepHeader(
+                            logoUrl: logoUrl,
+                            showsBack: true,
+                            onBack: claim.onBack,
+                            onClose: onClose
+                        )
                         .padding(.top, 18)
+                    } else {
+                        AvafliV2Header(logoUrl: logoUrl, onInfo: onInfo, onClose: onClose)
+                            .padding(.top, 18)
+                    }
 
                     VStack(spacing: 8) {
                         Text(headline)
@@ -1216,11 +1282,24 @@ struct AvafliV2CodeEntryView: View {
                                 if digits.count == 6 && !isVerifying { onSubmit(String(digits.prefix(6))) }
                             }
 
+                        if let claim {
+                            claimSendStatus(claim)
+                        }
+
                         if let errorText {
                             Text(errorText)
                                 .font(AvafliV2Font.inter(13))
                                 .foregroundColor(AvafliV2Color.errorRed)
                                 .multilineTextAlignment(.center)
+                        }
+
+                        if let infoText = claim?.infoText {
+                            // Information, not a mistake — never the error red.
+                            Text(infoText)
+                                .font(AvafliV2Font.inter(13))
+                                .foregroundColor(.white.opacity(0.85))
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
 
                         AvafliV2PillButton(accent: accent, title: "VERIFY", isLoading: isVerifying) {
@@ -1229,19 +1308,29 @@ struct AvafliV2CodeEntryView: View {
                         }
                         .disabled(isVerifying)
 
-                        Button(action: onResend) {
-                            // Two-tone: the question reads as copy, the underlined
-                            // action reads as a control.
-                            (Text("Didn't get it? ")
-                                .foregroundColor(.white.opacity(0.65))
-                             + Text("Send a new code")
-                                .foregroundColor(Color(red: 0.5, green: 0.69, blue: 1.0))
-                                .fontWeight(.bold)
-                                .underline())
-                                .font(AvafliV2Font.inter(14))
+                        if let claim {
+                            claimResend(claim)
+                            claimHelpLine
+                        } else {
+                            Button(action: onResend) {
+                                // Two-tone: the question reads as copy, the underlined
+                                // action reads as a control.
+                                (Text("Didn't get it? ")
+                                    .foregroundColor(.white.opacity(0.65))
+                                 + Text("Send a new code")
+                                    .foregroundColor(Color(red: 0.5, green: 0.69, blue: 1.0))
+                                    .fontWeight(.bold)
+                                    .underline())
+                                    .font(AvafliV2Font.inter(14))
+                            }
                         }
                     }
                     .padding(.horizontal, 22)
+                    .onChange(of: claim?.clearCount ?? 0) { _ in
+                        // Wrong or dead code: empty the field, keep the keyboard.
+                        code = ""
+                        codeFocused = true
+                    }
 
                     Spacer(minLength: 40)
 
@@ -1265,5 +1354,89 @@ struct AvafliV2CodeEntryView: View {
             }
             }
         }
+    }
+
+    // MARK: Prize-claim email-ownership step (3.2.0)
+
+    /// The small inline line above the field's messages: "Sending your
+    /// code…", "Code sent", the verified beat, or a failed send with Retry.
+    @ViewBuilder private func claimSendStatus(_ claim: AvafliV2ClaimCodeExtras) -> some View {
+        if claim.verified {
+            claimStatusText(AvafliV2Strings.verifyEmailSuccess)
+        } else {
+            switch claim.sendStatus {
+            case .idle:
+                EmptyView()
+            case .sending:
+                claimStatusText(AvafliV2Strings.claimCodeSending)
+            case .sent:
+                claimStatusText(AvafliV2Strings.claimCodeSent)
+            case let .failed(message):
+                VStack(spacing: 6) {
+                    Text(message)
+                        .font(AvafliV2Font.inter(13))
+                        .foregroundColor(AvafliV2Color.errorRed)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button(action: claim.onRetrySend) {
+                        Text(AvafliV2Strings.claimCodeRetry)
+                            .font(AvafliV2Font.inter(13, .bold))
+                            .foregroundColor(Color(red: 0.5, green: 0.69, blue: 1.0))
+                            .underline()
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func claimStatusText(_ text: String) -> some View {
+        Text(text)
+            .font(AvafliV2Font.inter(13))
+            .foregroundColor(.white.opacity(0.75))
+            .multilineTextAlignment(.center)
+    }
+
+    /// "Send a new code" — disabled, with a live countdown, until the
+    /// server's `resendAvailableAt`.
+    private func claimResend(_ claim: AvafliV2ClaimCodeExtras) -> some View {
+        TimelineView(.periodic(from: Date(), by: 1)) { _ in
+            let remaining = claim.resendSecondsRemaining(at: claim.now())
+            let sending = claim.sendStatus == .sending
+            Button(action: onResend) {
+                if remaining > 0 {
+                    Text(AvafliV2Strings.claimCodeResendCountdown(seconds: remaining))
+                        .font(AvafliV2Font.inter(14))
+                        .foregroundColor(.white.opacity(0.45))
+                } else {
+                    (Text("Didn't get it? ")
+                        .foregroundColor(.white.opacity(0.65))
+                     + Text("Send a new code")
+                        .foregroundColor(Color(red: 0.5, green: 0.69, blue: 1.0))
+                        .fontWeight(.bold)
+                        .underline())
+                        .font(AvafliV2Font.inter(14))
+                        .opacity(sending ? 0.45 : 1)
+                }
+            }
+            .disabled(remaining > 0 || sending)
+        }
+    }
+
+    /// "Can't get to this email? Contact info@avafli.com" — the way out when
+    /// the inbox itself is the problem.
+    private var claimHelpLine: some View {
+        Button {
+            if let url = URL(string: AvafliV2Strings.claimCodeHelpMailto) { openURL(url) }
+        } label: {
+            (Text(AvafliV2Strings.claimCodeHelp)
+                .foregroundColor(.white.opacity(0.65))
+             + Text(AvafliV2Strings.claimCodeHelpLink)
+                .foregroundColor(Color(red: 0.5, green: 0.69, blue: 1.0))
+                .underline())
+                .font(AvafliV2Font.inter(13))
+                .multilineTextAlignment(.center)
+        }
+        .buttonStyle(.plain)
     }
 }

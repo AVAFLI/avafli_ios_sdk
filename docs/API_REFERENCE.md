@@ -1,6 +1,6 @@
 # Avafli SDK — API Reference
 
-The [README](../README.md) is the canonical overview of the SDK; this page documents every public symbol as of 3.1.4.
+The [README](../README.md) is the canonical overview of the SDK; this page documents every public symbol as of 3.2.0.
 
 ## Table of Contents
 
@@ -8,7 +8,6 @@ The [README](../README.md) is the canonical overview of the SDK; this page docum
 - [AvafliConfiguration](#avafliconfiguration)
 - [AvafliAutoOpen](#avafliautoopen)
 - [AvafliOptions](#avaflioptions)
-- [AvafliEnvironment](#avaflienvironment)
 - [AvafliUser](#avafliuser)
 - [AvafliError](#avaflierror)
 - [DailyEntryGrant](#dailyentrygrant)
@@ -115,7 +114,6 @@ Forward the APNs failure from `application(_:didFailToRegisterForRemoteNotificat
 public struct AvafliConfiguration {
     public init(
         apiKey: String,
-        environment: AvafliEnvironment = .production,
         bundleId: String,
         user: AvafliUser,
         options: AvafliOptions = .init(),
@@ -127,7 +125,6 @@ public struct AvafliConfiguration {
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `apiKey` | `String` | ✅ | Your Avafli API key from the dashboard |
-| `environment` | `AvafliEnvironment` | — | `.production` (default; the only environment) |
 | `bundleId` | `String` | ✅ | App bundle ID (e.g. `com.example.myapp`) |
 | `user` | `AvafliUser` | ✅ | The authenticated user |
 | `options` | `AvafliOptions` | — | Optional behavior toggles |
@@ -174,18 +171,6 @@ public struct AvafliOptions {
 | `logging` | `LoggingLevel` | `.error` | `.none`, `.error`, `.info`, or `.debug` |
 | `analyticsAdapter` | `AnalyticsAdapter?` | `ConsoleAnalyticsAdapter()` | Routes SDK events to your analytics stack |
 | `enablePushReminders` | `Bool` | `true` | Enables streak reminder push notifications |
-
----
-
-## AvafliEnvironment
-
-```swift
-public enum AvafliEnvironment {
-    case production
-}
-```
-
-Production-only — there is no staging or QA backend.
 
 ---
 
@@ -296,7 +281,7 @@ Event-name constants emitted by the SDK:
 
 ```swift
 public enum AvafliConstants {
-    public static let sdkVersion = "3.1.1"
+    public static let sdkVersion = "3.2.0"
     public static let platformOS = "iOS"
 }
 ```

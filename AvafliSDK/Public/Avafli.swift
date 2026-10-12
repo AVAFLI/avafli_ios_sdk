@@ -29,9 +29,23 @@ public enum Avafli {
     /// (`adoptionPending` on the register / getActiveGiveaway response). The
     /// next experience open re-stages it (fresh code + code-entry screen).
     private static var cachedAdoptionPending: Bool?
-    /// RTD opt-out — from the backend or the local persisted flag. Once true the
-    /// experience is never auto-presented and `present` refuses.
+    /// RTD opt-out — from the backend or the local persisted flag. While true
+    /// the experience is never auto-presented and `present` refuses. It lifts
+    /// 24 hours after the deletion (3.2.0 — see `restoreOptOutLocked`).
     private static var cachedOptedOut = false
+    /// A lapsed opt-out was just lifted and a fresh registration went out.
+    /// If its response STILL reports the opt-out, the next try waits at least
+    /// `optOutRecheckInterval` — never a loop. Cleared by that response.
+    private static var rejoinAttempted = false
+    /// The latest registerDevice / getActiveGiveaway response carried a
+    /// `prizeClaim` still waiting to be submitted (`status == "pending"`).
+    /// While true the auto-open is not held back by the once-per-day mark —
+    /// a winner must always be able to get back to their claim.
+    private static var cachedPendingPrizeClaim = false
+    /// `configure(_:)` ran and no auto-open check has had its say yet. The
+    /// first check of a cold launch reopens a pending claim regardless of the
+    /// 30-minute throttle; later (foreground) checks respect it.
+    private static var launchAutoOpenPending = false
     private static var lifecycleObserver: NSObjectProtocol?
 
     // Publisher presentation control (3.1.4).
@@ -57,12 +71,41 @@ public enum Avafli {
     static let tokenRefreshGate = AvafliSingleFlight<String?>()
     /// Test seam: replaces the network registration step of `configure(_:)`.
     private static var registrationOverrideForTests: ((AvafliConfiguration) async -> Void)?
+    /// Test seam: the clock the 24-hour rejoin runs on.
+    private static var nowOverrideForTests: (() -> Date)?
+    /// Test seam: stands in for putting the experience on screen.
+    private static var presentationOverrideForTests: ((PresentationTrigger) -> Void)?
+
+    /// What put the experience on screen.
+    enum PresentationTrigger: Equatable {
+        /// The once-a-day auto-open.
+        case autoDaily
+        /// The auto-open of a pending prize claim (bypasses the daily mark).
+        case autoPendingClaim
+        /// `Avafli.present()`.
+        case publisher
+    }
+
+    /// A pending claim reopens on every cold launch, and on a foreground only
+    /// when this long has passed since it was last put in front of the winner.
+    static let pendingClaimReopenInterval: TimeInterval = 30 * 60
+
+    /// How long "Delete my data" blocks this device from registering again
+    /// (Rules §9, Terms §5.2, Privacy §6).
+    static let optOutRejoinInterval: TimeInterval = 24 * 60 * 60
+    /// The wait after the server refused a rejoin without naming a later time.
+    static let optOutRecheckInterval: TimeInterval = 15 * 60
 
     // Auto-present persistence (per-bundle keys so app reinstalls of a different
     // publisher app on the same device don't cross-contaminate).
     private static var lastAutoPresentKey: String { "winr_last_auto_present_\(configuration?.bundleId ?? "")" }
     private static var unregisteredImpressionsKey: String { "winr_unregistered_impressions_\(configuration?.bundleId ?? "")" }
     private static var optedOutKey: String { "winr_opted_out_\(configuration?.bundleId ?? "")" }
+    /// When the opt-out lifts, as seconds since 1970 (stored beside the flag).
+    private static var optedOutUntilKey: String { "winr_opted_out_until_\(configuration?.bundleId ?? "")" }
+    /// When a pending prize claim was last put on screen, as seconds since
+    /// 1970. Its own key — the daily mark is never used for this throttle.
+    private static var lastClaimAutoPresentKey: String { "winr_last_claim_auto_present_\(configuration?.bundleId ?? "")" }
     /// SPKI (public-key) pins for the backend hosted on *.cloudfunctions.net.
     ///
     /// These are Google Trust Services CA pins (NOT leaf-cert pins): pinning the CA
@@ -100,8 +143,9 @@ public enum Avafli {
     ///
     /// Same guards as the auto-open: the SDK must be configured, the user not
     /// opted out, the publisher not suspended, an active giveaway must exist
-    /// (otherwise a logged no-op) and the experience must not already be on
-    /// screen (no-op). Unlike the auto-open it **bypasses** the once-per-day
+    /// or a prize claim must be pending (otherwise a logged no-op) and the
+    /// experience must not already be on screen (no-op). With a prize claim
+    /// pending it opens on the winner splash. Unlike the auto-open it **bypasses** the once-per-day
     /// mark and the unregistered impression cap, and never counts an
     /// impression. When the experience closes it writes the same once-per-day
     /// mark the auto-open writes, so the auto-open won't double-pop that day.
@@ -148,6 +192,8 @@ public enum Avafli {
         let suspended = isSuspended
         let optedOut = cachedOptedOut
         let giveaway = cachedGiveaway
+        let pendingClaim = cachedPendingPrizeClaim
+        let presentationOverride = presentationOverrideForTests
         lock.unlock()
         if suspended {
             Logger.shared.log("present() ignored: publisher suspended", level: .info)
@@ -159,10 +205,17 @@ public enum Avafli {
             completion?(.failure(.optedOut))
             return false
         }
-        guard giveaway != nil else {
+        // A pending prize claim can outlive its giveaway — the winner flow
+        // still opens (on the winner splash).
+        guard giveaway != nil || pendingClaim else {
             Logger.shared.log("present() ignored: no active giveaway (registration failed or nothing is running)", level: .info)
             completion?(.failure(.giveawayNotActive))
             return false
+        }
+        if let presentationOverride {
+            if pendingClaim { notePendingClaimShown() }
+            presentationOverride(.publisher)
+            return true
         }
         guard let vc = topViewController() else {
             Logger.shared.log("present() ignored: no presenting view controller", level: .info)
@@ -174,6 +227,7 @@ public enum Avafli {
             return true
         }
         Logger.shared.log("Presenting Avafli experience (publisher-initiated)", level: .info)
+        if pendingClaim { notePendingClaimShown() }
         return present(from: vc, markDayOnClose: true, completion: completion)
     }
 
@@ -230,14 +284,18 @@ public enum Avafli {
         // publisher may have been re-enabled since the last launch.
         isSuspended = false
         // Restore the persisted RTD flag so an opted-out user stays suppressed
-        // even before (or without) a network round-trip.
-        cachedOptedOut = UserDefaults.standard.bool(forKey: optedOutKey)
+        // even before (or without) a network round-trip — unless its 24 hours
+        // are up, in which case the old session is cleared here and the
+        // registration below runs for a brand-new participant.
+        rejoinAttempted = false
+        restoreOptOutLocked()
         // Fresh boot: registration hasn't settled, and "new user this session"
         // is only ever set by this session's registerDevice. A host hold
         // (`holdAutoOpen()`) is intentionally left alone — it's set before us.
         hasBooted = false
         isNewUserThisSession = false
         bootRecoveryPending = false
+        launchAutoOpenPending = true
         // Register the bundled Inter/Oswald faces for the V2 experience.
         AvafliV2Font.registerIfNeeded()
         Logger.shared.level = configuration.options.logging
@@ -262,11 +320,7 @@ public enum Avafli {
         // Registration runs in EVERY auto-open mode — it stamps lastSeenAt /
         // sdk_version / platform (DAU/MAU); the mode only gates the drawer.
         registrationTask = Task {
-            if let override = registrationOverrideForTests {
-                await override(configuration)
-            } else {
-                await registerDeviceIfNeeded(configuration: configuration)
-            }
+            await runRegistration(configuration: configuration)
             markBooted()
             await MainActor.run { autoPresentIfEligible() }
             // Launch trigger for the offline retry queue: a pending same-day
@@ -285,6 +339,9 @@ public enum Avafli {
             ) { _ in
                 Task {
                     await registrationTask?.value
+                    // 24-hour rejoin: an opt-out that lapsed while the app
+                    // stayed in memory lifts on this foreground.
+                    await rejoinIfOptOutLapsed()
                     // Boot resilience: a boot fetch that died on a flaky
                     // network is re-run now, BEFORE the auto-open check.
                     await recoverBootIfNeeded()
@@ -308,6 +365,10 @@ public enum Avafli {
     /// Presents the experience automatically, at most once per calendar day,
     /// when all conditions allow. Called after registration completes and on
     /// each app foreground. All short-circuits are silent by design.
+    ///
+    /// A PENDING PRIZE CLAIM (3.2.0) changes the rules: the once-per-day
+    /// mark, the unregistered impression cap and `returningUsersOnly` no
+    /// longer hold the drawer back — see `autoPresentPendingClaim`.
     @MainActor
     private static func autoPresentIfEligible() {
         lock.lock()
@@ -319,6 +380,8 @@ public enum Avafli {
         let emailConsent = cachedEmailConsent
         let held = autoOpenHeld
         let newUser = isNewUserThisSession
+        let pendingClaim = cachedPendingPrizeClaim
+        let presentationOverride = presentationOverrideForTests
         lock.unlock()
 
         guard let config, !suspended, !optedOut else { return }
@@ -326,6 +389,15 @@ public enum Avafli {
         if held {
             Logger.shared.log("Auto-present deferred: host is holding auto-open", level: .debug)
             return
+        }
+        if pendingClaim {
+            autoPresentPendingClaim(config: config, experience: sdkConfig?.experience, presentationOverride: presentationOverride)
+            return
+        }
+        // This check has had its say: whatever a later one decides, it is
+        // no longer the cold launch's.
+        if presentationOverride != nil || topViewController() != nil {
+            consumeLaunchAutoOpen()
         }
         // Effective mode = most restrictive of the server kill switch
         // (autoOpenEnabled), the server autoOpenMode and the client autoOpen.
@@ -366,11 +438,14 @@ public enum Avafli {
         // Don't stack on top of an already-presented experience, and make sure a
         // presenting view controller actually exists — otherwise nothing renders
         // and neither the impression nor the once-per-day flag may be committed.
-        guard let top = topViewController() else {
-            Logger.shared.log("Auto-present skipped: no presenting view controller", level: .debug)
-            return
+        let top = topViewController()
+        if presentationOverride == nil {
+            guard let top else {
+                Logger.shared.log("Auto-present skipped: no presenting view controller", level: .debug)
+                return
+            }
+            if top is AvafliExperienceViewController { return }
         }
-        if top is AvafliExperienceViewController { return }
 
         // Committed to presenting — NOW count the unregistered impression and
         // mark today so a burned impression always corresponds to a real open.
@@ -379,7 +454,105 @@ public enum Avafli {
         }
         defaults.set(today, forKey: lastAutoPresentKey)
         Logger.shared.log("Auto-presenting Avafli experience (first open of the day)", level: .info)
-        present(from: top)
+        if let presentationOverride {
+            presentationOverride(.autoDaily)
+        } else if let top {
+            present(from: top)
+        }
+    }
+
+    /// The auto-open while a prize claim is pending. A winner who closed the
+    /// drawer must be able to get back to their claim (the claim window is 72
+    /// hours), so this BYPASSES the once-per-day mark, the unregistered
+    /// impression cap (and counts no impression) and `returningUsersOnly`.
+    /// It still RESPECTS the host's hold, opt-out and suspension (checked by
+    /// the caller), the server kill switch and mode `never` — a publisher on
+    /// `never` owns the timing and opens the winner flow with `present()`.
+    ///
+    /// Not a nag: it opens on every cold launch, and on a foreground only
+    /// when `pendingClaimReopenInterval` has passed since the claim was last
+    /// on screen.
+    @MainActor
+    private static func autoPresentPendingClaim(
+        config: AvafliConfiguration,
+        experience: ExperienceConfig?,
+        presentationOverride: ((PresentationTrigger) -> Void)?
+    ) {
+        let mode = AvafliAutoOpen.effective(
+            client: config.autoOpen,
+            serverEnabled: experience?.autoOpenEnabled,
+            serverMode: experience?.resolvedAutoOpenMode ?? .always
+        )
+        guard mode != .never else {
+            Logger.shared.log("Auto-present skipped: prize claim pending, but auto-open is off (mode never / kill switch)", level: .debug)
+            return
+        }
+        let top = topViewController()
+        if presentationOverride == nil {
+            guard let top else {
+                Logger.shared.log("Auto-present skipped: no presenting view controller", level: .debug)
+                return
+            }
+            if top is AvafliExperienceViewController { return }
+        }
+
+        let isLaunch = consumeLaunchAutoOpen()
+        let defaults = UserDefaults.standard
+        let now = currentDate()
+        let lastShown = defaults.object(forKey: lastClaimAutoPresentKey) as? Double
+        guard pendingClaimShouldReopen(isLaunch: isLaunch, lastShown: lastShown.map(Date.init(timeIntervalSince1970:)), now: now) else {
+            Logger.shared.log("Auto-present skipped: prize claim pending, shown less than 30 minutes ago", level: .debug)
+            return
+        }
+
+        // Committed. Its own timestamp drives the throttle; the daily mark is
+        // written as for any open, so once the claim is submitted the normal
+        // once-per-day rule picks up where this left off.
+        notePendingClaimShown()
+        defaults.set(Self.dayString(Date()), forKey: lastAutoPresentKey)
+        Logger.shared.log("Auto-presenting Avafli experience (prize claim pending)", level: .info)
+        if let presentationOverride {
+            presentationOverride(.autoPendingClaim)
+        } else if let top {
+            present(from: top)
+        }
+    }
+
+    /// The pending-claim throttle (pure; unit-tested).
+    static func pendingClaimShouldReopen(isLaunch: Bool, lastShown: Date?, now: Date) -> Bool {
+        if isLaunch { return true }
+        guard let lastShown else { return true }
+        // A stamp from the future (the device clock was set back) must never
+        // hold the claim back: the throttle counts as expired.
+        guard now >= lastShown else { return true }
+        return now.timeIntervalSince(lastShown) >= pendingClaimReopenInterval
+    }
+
+    /// Takes the cold launch's say, once registration has settled. Returns
+    /// whether this check is the cold launch's. A boot that died on the
+    /// network keeps it for the check that follows the recovery.
+    @discardableResult
+    private static func consumeLaunchAutoOpen() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard hasBooted, !bootRecoveryPending, launchAutoOpenPending else { return false }
+        launchAutoOpenPending = false
+        return true
+    }
+
+    /// Stamps "the pending claim was put in front of the winner just now".
+    private static func notePendingClaimShown() {
+        guard configuration != nil else { return }
+        UserDefaults.standard.set(currentDate().timeIntervalSince1970, forKey: lastClaimAutoPresentKey)
+    }
+
+    /// @internal — what the experience learned from its own getActiveGiveaway
+    /// (or from a submitted claim): whether a prize claim is still pending.
+    /// `onScreen` = the winner flow is showing right now.
+    static func notePendingPrizeClaim(_ pending: Bool, onScreen: Bool = false) {
+        lock.lock()
+        cachedPendingPrizeClaim = pending
+        lock.unlock()
+        if pending, onScreen { notePendingClaimShown() }
     }
 
     /// The mode-based part of the auto-open gate (pure; unit-tested).
@@ -410,22 +583,141 @@ public enum Avafli {
 
     // MARK: - RTD Opt-out
 
-    /// Right-To-Delete opt-out: tombstones the person on the backend (identity-wide,
-    /// PII anonymized, email suppressed) and permanently silences the experience on
-    /// this device. Wire this to the opt-out action in your privacy-policy flow.
+    /// Right-To-Delete opt-out: erases the person on the backend (identity-wide,
+    /// PII anonymized, entries and streaks forfeited) and silences the experience
+    /// on this device. For 24 hours that email and this device cannot register;
+    /// after that the person may join again as a brand-new participant with no
+    /// connection to the old profile. Wire this to the opt-out action in your
+    /// privacy-policy flow.
     public static func optOut() async throws {
         guard let configuration = configuration else { throw AvafliError.notConfigured }
         let keychain = KeychainStorage()
         guard keychain.loadToken() != nil else { throw AvafliError.authenticationRequired }
 
         let network = makeNetworkClient(configuration: configuration, keychain: keychain)
-        _ = try await network.send(OptOutRequest())
+        let response = try await network.send(OptOutRequest())
 
+        recordOptOut(serverUntil: response.optedOutUntil, refusedRejoin: false)
+        Logger.shared.log("User opted out of Avafli (RTD) — experience silenced; rejoin possible after 24 hours", level: .info)
+    }
+
+    // MARK: - 24-hour rejoin after deletion (3.2.0)
+
+    private static func currentDate() -> Date {
+        nowOverrideForTests?() ?? Date()
+    }
+
+    /// Restores the persisted opt-out and lifts it when its time is up.
+    /// Call with `lock` HELD. A flag cached by an older build carries no time:
+    /// it is given "first seen + 24 hours" here and lifts a day later.
+    /// Returns true when the opt-out was lifted by this call.
+    @discardableResult
+    private static func restoreOptOutLocked() -> Bool {
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey: optedOutKey) else {
+            cachedOptedOut = false
+            return false
+        }
+        let now = currentDate().timeIntervalSince1970
+        let until: Double
+        if let stored = defaults.object(forKey: optedOutUntilKey) as? Double {
+            until = stored
+        } else {
+            until = now + optOutRejoinInterval
+            defaults.set(until, forKey: optedOutUntilKey)
+        }
+        guard now >= until else {
+            cachedOptedOut = true
+            return false
+        }
+        clearSessionForRejoinLocked()
+        rejoinAttempted = true
+        Logger.shared.log("Opt-out lapsed (24 hours) — old session cleared; registering as a new participant", level: .info)
+        return true
+    }
+
+    /// Drops the opt-out and EVERY piece of the old session, so the next
+    /// registration starts a participant with no connection to the old
+    /// profile. The device id (identifierForVendor) is not the SDK's to clear
+    /// and stays. Call with `lock` HELD.
+    private static func clearSessionForRejoinLocked() {
+        let bundleId = configuration?.bundleId ?? ""
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: optedOutKey)
+        defaults.removeObject(forKey: optedOutUntilKey)
+        // Once-per-day auto-open mark + unregistered impression counter.
+        defaults.removeObject(forKey: lastAutoPresentKey)
+        defaults.removeObject(forKey: unregisteredImpressionsKey)
+        defaults.removeObject(forKey: lastClaimAutoPresentKey)
+        defaults.removeObject(forKey: "winr_marketing_consent")
+        // Cached giveaway + a claim retry queued by the old session.
+        defaults.removeObject(forKey: "winr.\(bundleId).giveaway")
+        defaults.removeObject(forKey: "winr.\(bundleId).offline.pendingIntents")
+        // Per-user state: email-submitted flag, streak, adoption code stamp.
+        let userPrefix = "winr.\(bundleId).user."
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(userPrefix) {
+            defaults.removeObject(forKey: key)
+        }
+        // Auth token, refresh token, token expiry, user id.
+        KeychainStorage().deleteAll()
+
+        cachedOptedOut = false
+        cachedGiveaway = nil
+        cachedClaimedToday = nil
+        cachedStreakDay = nil
+        cachedEmailConsent = nil
+        cachedAdoptionPending = nil
+        cachedPendingPrizeClaim = false
+        isNewUserThisSession = false
+    }
+
+    /// Foreground trigger: lifts an opt-out whose time passed while the app
+    /// stayed in memory, then registers. At most one registration per call.
+    private static func rejoinIfOptOutLapsed() async {
+        lock.lock()
+        let lifted = cachedOptedOut && restoreOptOutLocked()
+        let config = configuration
+        lock.unlock()
+        guard lifted, let config else { return }
+        await runRegistration(configuration: config)
+    }
+
+    private static func runRegistration(configuration: AvafliConfiguration) async {
+        lock.lock()
+        let override = registrationOverrideForTests
+        lock.unlock()
+        if let override {
+            await override(configuration)
+        } else {
+            await registerDeviceIfNeeded(configuration: configuration)
+        }
+    }
+
+    /// Caches and persists an opt-out together with the moment it lifts: the
+    /// server's `optedOutUntil` when a response carries one, otherwise this
+    /// device's clock + 24 hours (kept if a time is already stored).
+    private static func recordOptOut(serverUntil: String?, refusedRejoin: Bool) {
         lock.lock()
         cachedOptedOut = true
+        // An erased account has no claim to come back to.
+        cachedPendingPrizeClaim = false
         lock.unlock()
-        UserDefaults.standard.set(true, forKey: optedOutKey)
-        Logger.shared.log("User opted out of Avafli (RTD) — experience permanently silenced", level: .info)
+
+        let defaults = UserDefaults.standard
+        defaults.set(true, forKey: optedOutKey)
+        let now = currentDate().timeIntervalSince1970
+        let server = serverUntil.flatMap(AvafliClaimDates.parseISO)?.timeIntervalSince1970
+        if refusedRejoin {
+            // We waited out the local time, asked, and the server still says
+            // no (clock skew, sweep lag). Adopt its time and try again after
+            // it — never sooner than the recheck interval, so a time that is
+            // already behind this device's clock can't turn into a loop.
+            defaults.set(max(server ?? 0, now + optOutRecheckInterval), forKey: optedOutUntilKey)
+        } else if let server {
+            defaults.set(server, forKey: optedOutUntilKey)
+        } else if defaults.object(forKey: optedOutUntilKey) == nil {
+            defaults.set(now + optOutRejoinInterval, forKey: optedOutUntilKey)
+        }
     }
 
     /// Presents the Avafli experience modally from the specified view controller.
@@ -469,6 +761,7 @@ public enum Avafli {
         container.cachedStreakDay = cachedStreakDay
         container.sdkConfig = cachedSDKConfig
         container.adoptionPending = cachedAdoptionPending
+        container.pendingPrizeClaim = cachedPendingPrizeClaim
 
         let viewModel = AvafliExperienceViewModel(
             container: container,
@@ -540,10 +833,11 @@ public enum Avafli {
                         cachedSDKConfig = response.sdkConfig
                         cachedEmailConsent = response.emailConsentStatus
                         cachedAdoptionPending = response.adoptionPending
+                        cachedPendingPrizeClaim = response.prizeClaim?.isPending == true
                         if response.optedOut == true { cachedOptedOut = true }
                         bootRecoveryPending = false
                         lock.unlock()
-                        persistOptOutIfNeeded()
+                        persistOptOutIfNeeded(serverUntil: response.optedOutUntil)
                         prewarmPublisherArt()
                     } catch {
                         handleSuspensionIfNeeded(error)
@@ -564,10 +858,11 @@ public enum Avafli {
                     cachedSDKConfig = response.sdkConfig
                     cachedEmailConsent = response.emailConsentStatus
                     cachedAdoptionPending = response.adoptionPending
+                    cachedPendingPrizeClaim = response.prizeClaim?.isPending == true
                     if response.optedOut == true { cachedOptedOut = true }
                     bootRecoveryPending = false
                     lock.unlock()
-                    persistOptOutIfNeeded()
+                    persistOptOutIfNeeded(serverUntil: response.optedOutUntil)
                     prewarmPublisherArt()
                 } catch {
                     handleSuspensionIfNeeded(error)
@@ -610,13 +905,14 @@ public enum Avafli {
             cachedStreakDay = response.streakDay
             cachedSDKConfig = response.sdkConfig
             cachedAdoptionPending = response.adoptionPending
+            cachedPendingPrizeClaim = response.prizeClaim?.isPending == true
             if response.optedOut == true { cachedOptedOut = true }
             // First-ever registration of this device → `.returningUsersOnly`
             // skips this session's auto-open. Absent (older backend) → returning.
             isNewUserThisSession = response.isNewUser == true
             bootRecoveryPending = false
             lock.unlock()
-            persistOptOutIfNeeded()
+            persistOptOutIfNeeded(serverUntil: response.optedOutUntil)
             prewarmPublisherArt()
 
             Logger.shared.log("Device registered: \(response.uuid)\(response.isNewUser == true ? " (new user)" : "")", level: .info)
@@ -796,14 +1092,17 @@ public enum Avafli {
         lock.unlock()
     }
 
-    /// Persist the RTD flag whenever the backend reports it, so the suppression
-    /// holds on future launches even offline.
-    private static func persistOptOutIfNeeded() {
+    /// Persist the RTD flag (and the moment it lifts) whenever the backend
+    /// reports it, so the suppression holds on future launches even offline.
+    private static func persistOptOutIfNeeded(serverUntil: String? = nil) {
         lock.lock()
         let optedOut = cachedOptedOut
+        // This response answers the rejoin attempt (if there was one).
+        let refusedRejoin = rejoinAttempted
+        rejoinAttempted = false
         lock.unlock()
         if optedOut {
-            UserDefaults.standard.set(true, forKey: optedOutKey)
+            recordOptOut(serverUntil: serverUntil, refusedRejoin: refusedRejoin)
         }
     }
 
@@ -943,8 +1242,9 @@ public enum Avafli {
     // drawing was fair, and left prize-claim PII orphaned.
     //
     // Use `optOut()` instead. It is the correct erasure: identity-wide, PII scrubbed
-    // everywhere including prize claims, tombstoned so it survives a reinstall, and
-    // the experience stays permanently silenced on the device.
+    // everywhere including prize claims, and tombstoned so the same email and
+    // device cannot register again for 24 hours (it survives a reinstall). After
+    // that the person may join again as a brand-new participant (3.2.0).
 
     // MARK: - Push Notifications
 
@@ -1021,6 +1321,67 @@ public enum Avafli {
         isNewUserThisSession = false
         hasBooted = false
         bootRecoveryPending = false
+        cachedOptedOut = false
+        rejoinAttempted = false
+        nowOverrideForTests = nil
+        cachedPendingPrizeClaim = false
+        launchAutoOpenPending = false
+        presentationOverrideForTests = nil
+        isSuspended = false
         lock.unlock()
+    }
+    /// Stands in for putting the experience on screen (nil restores it).
+    static func _setPresentationOverrideForTests(_ override: ((PresentationTrigger) -> Void)?) {
+        lock.lock(); presentationOverrideForTests = override; lock.unlock()
+    }
+    static func _isPrizeClaimPendingForTests() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return cachedPendingPrizeClaim
+    }
+    /// What a register / getActiveGiveaway response does to the cached state.
+    static func _noteServerStateForTests(
+        giveaway: GiveawayConfig?,
+        prizeClaim: PrizeClaimBlock?,
+        sdkConfig: SDKConfigResponse? = nil,
+        emailConsent: Bool? = nil,
+        isNewUser: Bool = false
+    ) {
+        lock.lock()
+        cachedGiveaway = giveaway
+        cachedSDKConfig = sdkConfig
+        cachedEmailConsent = emailConsent
+        cachedPendingPrizeClaim = prizeClaim?.isPending == true
+        isNewUserThisSession = isNewUser
+        lock.unlock()
+    }
+    /// The foreground trigger's auto-open check.
+    @MainActor
+    static func _foregroundAutoOpenCheckForTests() {
+        autoPresentIfEligible()
+    }
+    static func _setSuspendedForTests(_ suspended: Bool) {
+        lock.lock(); isSuspended = suspended; lock.unlock()
+    }
+    /// Replaces the clock the 24-hour rejoin runs on (nil restores it).
+    static func _setNowForTests(_ now: (() -> Date)?) {
+        lock.lock(); nowOverrideForTests = now; lock.unlock()
+    }
+    static func _isOptedOutForTests() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return cachedOptedOut
+    }
+    /// What a register / getActiveGiveaway response carrying `optedOut` does.
+    static func _noteServerOptOutForTests(optedOut: Bool?, until: String?) {
+        lock.lock()
+        if optedOut == true { cachedOptedOut = true }
+        lock.unlock()
+        persistOptOutIfNeeded(serverUntil: until)
+    }
+    /// The foreground trigger's rejoin check.
+    static func _foregroundRejoinCheckForTests() async {
+        await rejoinIfOptOutLapsed()
+    }
+    static func _setCachedGiveawayForTests(_ giveaway: GiveawayConfig?) {
+        lock.lock(); cachedGiveaway = giveaway; lock.unlock()
     }
 }

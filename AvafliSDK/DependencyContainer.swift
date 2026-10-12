@@ -30,6 +30,10 @@ struct DependencyContainer {
     /// getActiveGiveaway response) — the experience re-stages it on open.
     var adoptionPending: Bool?
 
+    /// The latest register / getActiveGiveaway response carried a prize
+    /// claim still waiting to be submitted — this open is (also) for it.
+    var pendingPrizeClaim = false
+
     init(configuration: AvafliConfiguration, user: AvafliUser) {
         self.configuration = configuration
         self.user = user
@@ -73,6 +77,23 @@ struct DependencyContainer {
         self.analytics = AvafliOfflineResilience.shared?
             .analyticsAdapter(wrapping: configuration.options.analyticsAdapter)
             ?? configuration.options.analyticsAdapter
+        self.cachedGiveaway = nil
+    }
+
+    /// Test seam: a container over stubbed collaborators (no URLSession).
+    init(
+        configuration: AvafliConfiguration,
+        user: AvafliUser,
+        network: NetworkClient,
+        storage: Storage,
+        keychain: KeychainStorage
+    ) {
+        self.configuration = configuration
+        self.user = user
+        self.network = network
+        self.storage = storage
+        self.keychain = keychain
+        self.analytics = configuration.options.analyticsAdapter
         self.cachedGiveaway = nil
     }
 }

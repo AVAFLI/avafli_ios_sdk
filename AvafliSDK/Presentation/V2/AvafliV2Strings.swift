@@ -27,6 +27,44 @@ enum AvafliV2Strings {
     static let invalidLastName = "Please enter a valid last name."
     static let invalidPhone = "Please enter a valid 10-digit mobile number."
 
+    // MARK: - Prize claim: email-ownership code (3.2.0)
+
+    /// Subtitle on the claim code screen. The SDK never holds the raw address
+    /// — `maskedEmail` is the backend-masked one from the prizeClaim block.
+    static func claimCodeSubtitle(maskedEmail: String?) -> String {
+        let masked = maskedEmail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return "Enter the 6-digit code we sent to \(masked.isEmpty ? "your email" : masked)"
+    }
+    /// Small inline status while the send is in flight / after a real send.
+    static let claimCodeSending = "Sending your code…"
+    static let claimCodeSent = "Code sent"
+    static let claimCodeRetry = "Try again"
+    /// The resend action while its cooldown is running.
+    static func claimCodeResendCountdown(seconds: Int) -> String {
+        let s = max(seconds, 0)
+        return "Send a new code in \(s / 60):\(String(format: "%02d", s % 60))"
+    }
+    /// Help line under the resend action; the second half is a mailto link.
+    static let claimCodeHelp = "Can't get to this email? "
+    static let claimCodeHelpLink = "Contact info@avafli.com"
+    static let claimCodeHelpMailto = "mailto:info@avafli.com"
+    /// `code_mismatch`. Without a count the adoption mismatch copy is used.
+    static func claimCodeMismatch(attemptsRemaining: Int?) -> String {
+        guard let left = attemptsRemaining else { return codeIncorrect }
+        return "That code didn't match. \(left) \(left == 1 ? "try" : "tries") left."
+    }
+    /// `fresh_code_sent` normally shows the server's own message; this is the
+    /// fallback when that message is empty.
+    static let claimCodeFreshSent = "That code can no longer be used, so we sent you a new one. Check your email."
+    static func claimCodeResendCooldown(seconds: Int?) -> String {
+        guard let seconds, seconds > 0 else { return "Please wait a moment before requesting another code." }
+        return "Please wait \(seconds) \(seconds == 1 ? "second" : "seconds") before requesting another code."
+    }
+    static let claimCodeSendLimit = "You've requested several codes. Please try again in a little while, or contact info@avafli.com."
+    static let claimCodeSendFailed = "We couldn't send your code just now. Please try again in a minute."
+    static let claimCodeNoEmailOnFile = "We don't have an email on file for this account. Contact info@avafli.com to claim your prize."
+    static let claimCodeUnreachable = "We couldn't reach the server. Check your connection and try again."
+
     // MARK: - Adoption code entry
 
     /// Three-way code-error taxonomy, matched across the SDKs. The backend sends
@@ -81,7 +119,9 @@ enum AvafliV2Strings {
     // how-it-works link — the delete path is reached through the Privacy
     // Policy webview's own delete section via the winr://delete bridge.)
     static let optOutTitle = "Delete my data & stop participating"
-    static let optOutBody = "This permanently deletes your Avafli data, ends your giveaway participation, and cannot be undone. You can also email info@avafli.com."
+    /// 3.2.0: deletion blocks this email and device for 24 hours, not forever
+    /// (Rules §9, Terms §5.2, Privacy §6).
+    static let optOutBody = "This permanently erases your information and ends your participation. Entries and streaks are forfeited and cannot be restored. You can join again as a new participant after 24 hours."
     static let optOutConfirm = "DELETE MY DATA"
     static let optOutCancel = "Cancel"
     /// Brief success state shown before the experience dismisses itself.

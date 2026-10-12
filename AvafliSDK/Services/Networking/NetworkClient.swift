@@ -351,6 +351,15 @@ final class URLSessionNetworkClient: NetworkClient {
                 if Self.isGeoBlockedError(message: body) {
                     return .failure(AvafliError.geoBlocked)
                 }
+                // A reason-tagged rejection (the claim code's `code_mismatch`
+                // is a `permission-denied`) is an ANSWER, not an auth failure.
+                // Surfacing it also keeps it off the refresh-and-retry path,
+                // which would spend a second try on the same wrong code.
+                if request.surfacesCallableErrorDetails,
+                   let failure = AvafliCallableFailure(responseBody: data),
+                   failure.reason != nil {
+                    return .failure(failure)
+                }
                 return .failure(AvafliError.authenticationRequired)
             }
             if !(200...299).contains(httpResponse.statusCode) {
@@ -362,6 +371,10 @@ final class URLSessionNetworkClient: NetworkClient {
                     }
                     if Self.isGeoBlockedError(message: errorBody.error.message) {
                         return .failure(AvafliError.geoBlocked)
+                    }
+                    if request.surfacesCallableErrorDetails,
+                       let failure = AvafliCallableFailure(responseBody: data) {
+                        return .failure(failure)
                     }
                     return .failure(AvafliError.internalError(errorBody.error.message))
                 }
@@ -421,4 +434,89 @@ private struct CallableErrorResponse: Decodable {
 private struct CallableErrorDetail: Decodable {
     let message: String
     let status: String?
+    /// Machine-readable extras (`HttpsError.details`). Decoded leniently: a
+    /// shape this SDK doesn't know must never cost the caller the message.
+    let details: CallableErrorDetails?
+
+    private enum CodingKeys: String, CodingKey { case message, status, details }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        message = try c.decode(String.self, forKey: .message)
+        status = try c.decodeIfPresent(String.self, forKey: .status)
+        details = try? c.decodeIfPresent(CallableErrorDetails.self, forKey: .details)
+    }
+}
+
+private struct CallableErrorDetails: Decodable {
+    let reason: String?
+    let retryAfterSeconds: Int?
+    let attemptsRemaining: Int?
+    let verification: ClaimVerificationBlock?
+
+    private enum CodingKeys: String, CodingKey {
+        case reason, retryAfterSeconds, attemptsRemaining, verification
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        reason = try? c.decodeIfPresent(String.self, forKey: .reason)
+        retryAfterSeconds = Self.wholeNumber(in: c, for: .retryAfterSeconds)
+        attemptsRemaining = Self.wholeNumber(in: c, for: .attemptsRemaining)
+        verification = try? c.decodeIfPresent(ClaimVerificationBlock.self, forKey: .verification)
+    }
+
+    /// JSON numbers arrive as 45 or 45.0 depending on the encoder.
+    private static func wholeNumber(in c: KeyedDecodingContainer<CodingKeys>, for key: CodingKeys) -> Int? {
+        if let n = try? c.decodeIfPresent(Int.self, forKey: key) { return n }
+        if let n = try? c.decodeIfPresent(Double.self, forKey: key) { return Int(n.rounded(.up)) }
+        return nil
+    }
+}
+
+/// A callable rejection with its machine-readable details, for the requests
+/// that opt in (`APIRequest.surfacesCallableErrorDetails`). Wire format:
+/// `{"error":{"status":"FAILED_PRECONDITION","message":"…","details":{…}}}`.
+struct AvafliCallableFailure: Error, CustomStringConvertible {
+    /// The callable status, e.g. "FAILED_PRECONDITION", "RESOURCE_EXHAUSTED".
+    let status: String?
+    let message: String
+    /// `details.reason`, e.g. "code_mismatch", "fresh_code_sent".
+    let reason: String?
+    let retryAfterSeconds: Int?
+    let attemptsRemaining: Int?
+    let verification: ClaimVerificationBlock?
+
+    init(
+        status: String?,
+        message: String,
+        reason: String? = nil,
+        retryAfterSeconds: Int? = nil,
+        attemptsRemaining: Int? = nil,
+        verification: ClaimVerificationBlock? = nil
+    ) {
+        self.status = status
+        self.message = message
+        self.reason = reason
+        self.retryAfterSeconds = retryAfterSeconds
+        self.attemptsRemaining = attemptsRemaining
+        self.verification = verification
+    }
+
+    /// nil when the body is not a callable error envelope.
+    init?(responseBody data: Data) {
+        guard let body = try? JSONDecoder().decode(CallableErrorResponse.self, from: data) else { return nil }
+        self.init(
+            status: body.error.status,
+            message: body.error.message,
+            reason: body.error.details?.reason,
+            retryAfterSeconds: body.error.details?.retryAfterSeconds,
+            attemptsRemaining: body.error.details?.attemptsRemaining,
+            verification: body.error.details?.verification
+        )
+    }
+
+    /// Carries the message, so callers that match on the error's text (the
+    /// claim submit's "Already submitted") keep working.
+    var description: String { "callableFailure(\(status ?? "UNKNOWN"): \(message))" }
 }

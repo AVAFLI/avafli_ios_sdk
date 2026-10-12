@@ -4,7 +4,7 @@
 [![Platform](https://img.shields.io/badge/platform-iOS%2015.0%2B-blue.svg)](https://developer.apple.com/ios/)
 [![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange.svg)](https://swift.org)
 [![SPM](https://img.shields.io/badge/SPM-compatible-brightgreen.svg)](https://swift.org/package-manager/)
-[![CocoaPods](https://img.shields.io/badge/CocoaPods-3.1.4-red.svg)](https://cocoapods.org/pods/AvafliSDK)
+[![CocoaPods](https://img.shields.io/badge/CocoaPods-3.2.0-red.svg)](https://cocoapods.org/pods/AvafliSDK)
 
 ---
 
@@ -18,12 +18,12 @@ Avafli lets you add daily-entry sweepstakes and prize experiences to your app in
 - **Daily streak ladder + auto-claim** — A simple +10-entries-per-day ladder, claimed automatically the moment the drawer opens
 - **Email capture with explicit consent** — The SDK captures an email through its own screen, with an unchecked-by-default marketing-consent box and a publisher-configurable age gate
 - **Cross-device verified adoption** — Typing an email that matches an existing Avafli account requires a 6-digit code before the streak merges to the new device
-- **"Verify your email" soft-verification** — A persistent chip on the dashboard lets users confirm a brand-new typed address; it never blocks daily play, only prize-draw eligibility
+- **"Verify your email" soft-verification** — A persistent chip on the dashboard lets users confirm a brand-new typed address; it never blocks daily play or the prize draw; confirming early means no code step if they win
 - **Winner announcements** — "WE HAVE A WINNER!" banner and winner dialog, driven by the giveaway's `latestWinner`
 - **Visit mode** — A never-resetting streak variant for low-frequency apps
 - **Push reminders** — Drive re-engagement with daily nudges (FCM, with local fallback)
 - **Server-driven branding** — Logo, prize image, and primary color update without app releases
-- **GDPR/CCPA compliant** — Built-in consent flows plus an RTD opt-out (`optOut()`) users can reach themselves via **Delete my data & stop participating** inside the in-app Privacy Policy
+- **GDPR/CCPA compliant** — Built-in consent flows plus an RTD opt-out (`optOut()`) users can reach themselves via **Delete my data & stop participating** inside the in-app Privacy Policy; a person who deleted their data may join again as a new participant after 24 hours
 - **No ad tracking** — The SDK collects no advertising identifiers and never shows the App Tracking Transparency prompt
 - **Analytics forwarding** — Route SDK events to your existing analytics stack
 
@@ -35,6 +35,7 @@ import AvafliSDK
 let config = AvafliConfiguration(
     apiKey: "YOUR_API_KEY",  // debug builds: use your avafli_test_ sandbox key
     bundleId: "com.example.myapp",
+    autoOpen: .always,  // or .returningUsersOnly / .never
     user: AvafliUser(
         id: "user_123",             // only id is required — pass whatever identity you have
         firstName: "Jane",
@@ -49,7 +50,7 @@ let config = AvafliConfiguration(
 )
 Avafli.configure(config)
 
-// Done — the experience auto-opens once per day. No further calls needed.
+// Done — auto-opens once a day. To open it yourself: Avafli.present()
 // Push reminders: forward your FCM token so they can deliver:
 //   Avafli.didReceiveFCMToken(token)
 ```
@@ -88,7 +89,6 @@ user: AvafliUser(id: "user_123", firstName: "Jane", lastName: "Doe", email: "jan
 ```swift
 Avafli.configure(AvafliConfiguration(
     apiKey: "YOUR_API_KEY",
-    environment: .production,  // optional — defaults to .production (2.8.0+)
     bundleId: Bundle.main.bundleIdentifier!,
     user: .guest
 ))
@@ -107,14 +107,14 @@ Avafli is distributed via **Swift Package Manager** and **CocoaPods**:
 
 1. **File → Add Package Dependencies…**
 2. Enter the repository URL: `https://github.com/AVAFLI/avafli_ios_sdk.git`
-3. Set dependency rule to **Up to Next Major Version** from `3.1.1`
+3. Set dependency rule to **Up to Next Major Version** from `3.2.0`
 4. Add the `AvafliSDK` library to your app target
 
 ### Package.swift
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.1.4")
+    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.2.0")
 ]
 ```
 
@@ -137,13 +137,13 @@ pod install
 
 ## Configuration
 
-Initialize the SDK with your user and environment settings:
+Initialize the SDK with your API key and user:
 
 ```swift
 let config = AvafliConfiguration(
     apiKey: "avafli_live_xxxxxxxxxx",
-    environment: .production,  // optional — defaults to .production (2.8.0+)
     bundleId: "com.example.myapp",
+    autoOpen: .always,  // or .returningUsersOnly / .never
     user: AvafliUser(
         id: "user_abc123",
         firstName: "Jane",
@@ -165,7 +165,6 @@ Avafli.configure(config)
 | Parameter | Type | Required | Description |
 | --------- | ---- | -------- | ----------- |
 | `apiKey` | `String` | ✅ | Your Avafli API key from the dashboard |
-| `environment` | `AvafliEnvironment` | — | `.production` (default; the only environment) |
 | `bundleId` | `String` | ✅ | App bundle ID (e.g., com.example.myapp) |
 | `user` | `AvafliUser` | ✅ | The authenticated user |
 | `options` | `AvafliOptions?` | — | Optional behavior toggles |
@@ -233,9 +232,11 @@ The V2 experience presents itself automatically once per calendar day (first app
 
 Your publisher dashboard can also set a server-side mode; the most restrictive of the two wins, and the server kill switch always wins.
 
+**A winner with a pending prize claim is the one exception to "once per day".** While a claim is waiting to be submitted the drawer reopens on every app launch, and on a return to the foreground when 30 minutes have passed since the claim was last on screen — so a winner who closed the drawer can always get back to it inside the claim window. This ignores the once-per-day mark, the unregistered impression cap (no impression is counted) and `.returningUsersOnly`, and it works when no giveaway is currently running. It still respects `holdAutoOpen()`, opt-out, a suspended account, the server kill switch and `.never` — on `.never` you own the timing: call `Avafli.present()`, which opens on the winner splash. Once the claim is submitted the normal once-per-day rule applies again.
+
 ### `Avafli.present()`
 
-Opens the drawer from a button, a screen, or the end of onboarding. It applies the same guards as the auto-open (configured, not opted out, not suspended, an active giveaway exists, not already on screen) but **bypasses** the once-per-day mark and the unregistered impression cap, and never counts an impression. If registration is still in flight it waits for it rather than racing it; if registration failed it resolves `false` (never throws). When the drawer closes it writes the same once-per-day mark the auto-open writes, so the auto-open won't double-pop that day.
+Opens the drawer from a button, a screen, or the end of onboarding. It applies the same guards as the auto-open (configured, not opted out, not suspended, an active giveaway exists — or a prize claim is pending —, not already on screen) but **bypasses** the once-per-day mark and the unregistered impression cap, and never counts an impression. If registration is still in flight it waits for it rather than racing it; if registration failed it resolves `false` (never throws). When the drawer closes it writes the same once-per-day mark the auto-open writes, so the auto-open won't double-pop that day.
 
 ### `Avafli.holdAutoOpen()` / `Avafli.releaseAutoOpen()`
 
@@ -259,7 +260,11 @@ Avafli.present()
 
 ## Winner Experience
 
-When one of your users is drawn as a giveaway winner, the drawer automatically opens on a winner splash instead of the dashboard, then walks them through a stepped prize-claim form with progress dots (name, shipping address, optional photo and story) plus a review-and-agree screen, ending in a confirmation with their claim number on the OFFICIAL WINNER card. The winning email is never re-entered — a backend-masked address is shown for recognition and the claim is keyed to the account server-side. This requires no integration work — the flow appears only for the drawn winner and disappears once their claim is submitted.
+When one of your users is drawn as a giveaway winner, the drawer automatically opens on a winner splash instead of the dashboard, then walks them through a stepped prize-claim form with progress dots (name, shipping address, optional photo and story) plus a review-and-agree screen, ending in a confirmation with their claim number on the OFFICIAL WINNER card. The winning email is never re-entered — a backend-masked address is shown for recognition and the claim is keyed to the account server-side. This requires no integration work — the flow appears only for the drawn winner and disappears once their claim is submitted. It does not need a running giveaway: a winner is drawn after their giveaway has ended, so the drawer opens for the claim alone, and leaving the winner flow then simply closes the drawer.
+
+### Prize claims
+
+Before the claim form opens, a winner proves they control the inbox on file by entering a 6-digit code the SDK has emailed to their registered address (Official Rules §7). Winners who proved the inbox earlier skip the step. The state of the step lives on the server, so a winner who closes the drawer, switches device or reinstalls resumes exactly where they were. There is nothing for the host app to do.
 
 ## Push Notifications
 
@@ -363,11 +368,21 @@ experience — no integration required.
 try await Avafli.optOut()
 ```
 
-The erasure is identity-wide (one call covers all of the person's devices),
-includes prize-claim records, and permanently silences the experience on the
-device — it survives a reinstall. De-identified entry records are retained as
-the legally required evidence that drawings were fair (GDPR Art. 17(3)): the
-person is erased, the proof is kept.
+The erasure is identity-wide (one call covers all of the person's devices)
+and includes prize-claim records; entries and streaks are forfeited and cannot
+be restored. De-identified entry records are retained as the legally required
+evidence that drawings were fair (GDPR Art. 17(3)): the person is erased, the
+proof is kept.
+
+### Delete my data
+
+For 24 hours after a deletion that email and that device cannot register, and
+the experience stays silent on the device (`present()` is a no-op) — this
+survives a reinstall. After 24 hours the person may join again as a brand-new
+participant with no connection to the old profile: on the next
+`Avafli.configure(_:)` or app foreground the SDK clears the old session,
+registers the device afresh and shows the normal email-capture flow. There is
+nothing for the host app to do.
 
 
 ## API Reference
@@ -380,7 +395,7 @@ person is erased, the proof is kept.
 | `Avafli.present(completion:)` | `Bool` | Open the experience yourself (after onboarding, from a button); bypasses the once-per-day mark |
 | `Avafli.holdAutoOpen()` | `Void` | Defer the once-a-day auto-open (safe before `configure`) |
 | `Avafli.releaseAutoOpen()` | `Void` | Clear the hold and re-run the auto-open check |
-| `Avafli.optOut()` | `async throws` | RTD opt-out — permanently silence the experience |
+| `Avafli.optOut()` | `async throws` | RTD opt-out — erase the person's data and silence the experience (rejoin possible after 24 hours) |
 
 ### Push Notifications
 

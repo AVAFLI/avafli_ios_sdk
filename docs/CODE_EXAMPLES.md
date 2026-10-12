@@ -16,7 +16,6 @@ func application(_ application: UIApplication,
                  didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
     let config = AvafliConfiguration(
         apiKey: "YOUR_API_KEY",
-        environment: .production,
         bundleId: Bundle.main.bundleIdentifier ?? "",
         user: AvafliUser(
             id: "user_123",
@@ -44,7 +43,6 @@ struct MyApp: App {
     init() {
         Avafli.configure(AvafliConfiguration(
             apiKey: "YOUR_API_KEY",
-            environment: .production,
             bundleId: Bundle.main.bundleIdentifier ?? "",
             user: AvafliUser(id: "user_123", firstName: "Jane", lastName: "Doe")
         ))
@@ -105,7 +103,6 @@ final class SegmentAnalyticsAdapter: AnalyticsAdapter {
 
 let config = AvafliConfiguration(
     apiKey: "YOUR_API_KEY",
-    environment: .production,
     bundleId: Bundle.main.bundleIdentifier ?? "",
     user: AvafliUser(id: "user_123", firstName: "Jane", lastName: "Doe"),
     options: AvafliOptions(
@@ -151,7 +148,6 @@ same erasure.
 ## 6. Environments
 
 ```swift
-let environment: AvafliEnvironment = .production  // production-only
 ```
 
 ---

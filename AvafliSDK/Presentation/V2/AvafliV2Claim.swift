@@ -158,7 +158,7 @@ enum AvafliClaimDates {
         return out.string(from: date).uppercased()
     }
 
-    private static func parseISO(_ value: String) -> Date? {
+    static func parseISO(_ value: String) -> Date? {
         let withFraction = ISO8601DateFormatter()
         withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let d = withFraction.date(from: value) { return d }
@@ -209,6 +209,8 @@ struct AvafliV2WinnerClaimFlow: View {
     /// Google Places key from sdkConfig (OPTIONAL) — street-field autocomplete
     /// on the address step. Absent → plain typing.
     var placesApiKey: String? = nil
+    /// Official Rules link for the code screen's legal footer.
+    var rulesUrl: String? = nil
     let claim: PrizeClaimBlock
 
     var body: some View {
@@ -224,6 +226,35 @@ struct AvafliV2WinnerClaimFlow: View {
                     ),
                     onContinue: { viewModel.winnerClaimContinue() },
                     onClose: { viewModel.requestDismiss() }
+                )
+            case .verifyCode:
+                // Email-ownership step (3.2.0): the SAME code-entry screen as
+                // the cross-device link code, with the claim's own copy, a
+                // Back to the splash, and the send status / resend countdown
+                // driven by the server's verification block.
+                AvafliV2CodeEntryView(
+                    accent: accent,
+                    logoUrl: logoUrl,
+                    rulesUrl: rulesUrl,
+                    email: "",
+                    headline: "CHECK YOUR EMAIL",
+                    subtitle: AvafliV2Strings.claimCodeSubtitle(maskedEmail: claim.maskedEmail),
+                    isVerifying: viewModel.isConfirmingClaimCode,
+                    errorText: claimCodeErrorText,
+                    onSubmit: { viewModel.confirmClaimCode($0) },
+                    onResend: { viewModel.resendClaimCode() },
+                    onInfo: {},
+                    onClose: { viewModel.requestDismiss() },
+                    claim: AvafliV2ClaimCodeExtras(
+                        sendStatus: viewModel.claimCodeSendStatus,
+                        infoText: claimCodeInfoText,
+                        verified: viewModel.claimCodeVerified,
+                        resendAvailableAt: viewModel.claimResendAvailableAt,
+                        clearCount: viewModel.claimCodeClearCount,
+                        now: viewModel.now,
+                        onRetrySend: { viewModel.retryClaimCodeSend() },
+                        onBack: { viewModel.winnerClaimCodeBack() }
+                    )
                 )
             case .form:
                 AvafliV2ClaimStepsFlow(
@@ -254,11 +285,21 @@ struct AvafliV2WinnerClaimFlow: View {
                     form: viewModel.submittedClaimForm,
                     claimNumber: claimNumber,
                     submittedAt: submittedAt,
-                    onDone: { viewModel.requestDismiss() }
+                    onDone: { viewModel.winnerConfirmationDone() }
                 )
             }
         }
         .animation(.easeInOut(duration: 0.3), value: viewModel.winnerClaimStep)
+    }
+
+    private var claimCodeErrorText: String? {
+        if case let .error(text)? = viewModel.claimCodeNotice { return text }
+        return nil
+    }
+
+    private var claimCodeInfoText: String? {
+        if case let .info(text)? = viewModel.claimCodeNotice { return text }
+        return nil
     }
 
     /// "I just won {prize} in {app}!" — the share screen's prefilled line.

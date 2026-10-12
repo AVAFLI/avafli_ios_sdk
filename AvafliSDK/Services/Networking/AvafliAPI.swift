@@ -46,6 +46,9 @@ struct RegisterDeviceResponse: Decodable {
     let sdkConfig: SDKConfigResponse?
     /// True when this device/person has opted out (RTD) — never auto-present.
     let optedOut: Bool?
+    /// ISO moment the opt-out block lifts (24 hours after the deletion). Sent
+    /// alongside `optedOut == true`; absent from older backends.
+    let optedOutUntil: String?
     /// Present only when this person is the drawn winner of one of this
     /// publisher's giveaways (winner prize-claim flow).
     let prizeClaim: PrizeClaimBlock?
@@ -602,6 +605,8 @@ struct GetActiveGiveawayResponse: Decodable {
     let emailConsentStatus: Bool?
     /// True when this person has opted out (RTD) — the SDK must never auto-present.
     let optedOut: Bool?
+    /// ISO moment the opt-out block lifts (see RegisterDeviceResponse).
+    let optedOutUntil: String?
     /// Present only when this person is the drawn winner of one of this
     /// publisher's giveaways and the winner record is still claimable.
     /// `status == "pending"` drives the winner splash → claim form flow;
@@ -630,6 +635,10 @@ struct PrizeClaimBlock: Codable {
     let maskedEmail: String?
     let claimNumber: String?      // present when submitted
     let submittedAt: String?      // ISO date, when submitted
+    /// Email-ownership step before the claim form (3.2.0). Present only while
+    /// the claim is pending and the platform flag is on; absent → today's
+    /// flow. The server holds this state — the SDK only mirrors it in memory.
+    var verification: ClaimVerificationBlock?
 
     var isPending: Bool { status == "pending" }
 
@@ -645,7 +654,69 @@ struct PrizeClaimBlock: Codable {
         maskedEmail = try c.decodeIfPresent(String.self, forKey: .maskedEmail)
         claimNumber = try c.decodeIfPresent(String.self, forKey: .claimNumber)
         submittedAt = try c.decodeIfPresent(String.self, forKey: .submittedAt)
+        verification = try? c.decodeIfPresent(ClaimVerificationBlock.self, forKey: .verification)
     }
+}
+
+/// Mirrors `ClaimVerificationBlock` in the backend's types.ts.
+struct ClaimVerificationBlock: Codable, Equatable {
+    /// false → this person already proved the inbox; go straight to the form.
+    let required: Bool
+    /// ISO. Present = a live code exists.
+    let codeSentAt: String?
+    /// ISO. codeSentAt + 10 minutes.
+    let codeExpiresAt: String?
+    /// ISO. codeSentAt + 60 seconds.
+    let resendAvailableAt: String?
+
+    init(required: Bool, codeSentAt: String? = nil, codeExpiresAt: String? = nil, resendAvailableAt: String? = nil) {
+        self.required = required
+        self.codeSentAt = codeSentAt
+        self.codeExpiresAt = codeExpiresAt
+        self.resendAvailableAt = resendAvailableAt
+    }
+}
+
+/// Sends (or re-uses) the claim code. Without `resend` the backend sends only
+/// when there is no live code, so this is safe to call every time the code
+/// screen opens; `resend: true` is the "Send a new code" action.
+struct SendClaimVerificationCodeRequest: APIRequest {
+    typealias Response = SendClaimVerificationCodeResponse
+    let giveawayId: String
+    var resend = false
+    var path: String { "sendClaimVerificationCode" }
+    var method: String { "POST" }
+    var surfacesCallableErrorDetails: Bool { true }
+    var body: Data? {
+        var data: [String: Any] = ["giveawayId": giveawayId]
+        if resend { data["resend"] = true }
+        return try? JSONSerialization.data(withJSONObject: ["data": data])
+    }
+}
+
+struct SendClaimVerificationCodeResponse: Decodable {
+    /// false when a live code was re-used (nothing new was emailed).
+    let sent: Bool
+    let verification: ClaimVerificationBlock?
+}
+
+/// Checks the six-digit claim code. Rejections carry `details.reason`
+/// (`code_mismatch`, `fresh_code_sent`, …) — see AvafliCallableFailure.
+struct ConfirmClaimVerificationCodeRequest: APIRequest {
+    typealias Response = ConfirmClaimVerificationCodeResponse
+    let giveawayId: String
+    let code: String
+    var path: String { "confirmClaimVerificationCode" }
+    var method: String { "POST" }
+    var surfacesCallableErrorDetails: Bool { true }
+    var body: Data? {
+        try? JSONSerialization.data(withJSONObject: ["data": ["giveawayId": giveawayId, "code": code]])
+    }
+}
+
+struct ConfirmClaimVerificationCodeResponse: Decodable {
+    let verified: Bool
+    let verification: ClaimVerificationBlock?
 }
 
 struct SubmitPrizeClaimRequest: APIRequest {
@@ -669,8 +740,13 @@ struct SubmitPrizeClaimRequest: APIRequest {
 
     var path: String { "submitPrizeClaim" }
     var method: String { "POST" }
+    var surfacesCallableErrorDetails: Bool { true }
     var body: Data? {
         var data: [String: Any] = [
+            // 3.2.0: tells the backend this build has the email-ownership
+            // step, so an unproven inbox is refused (`claim_verification_
+            // required`) rather than accepted as a legacy-client claim.
+            "supportsClaimVerification": true,
             "giveawayId": giveawayId,
             "firstName": firstName,
             "lastName": lastName,
@@ -726,4 +802,7 @@ struct OptOutRequest: APIRequest {
 struct OptOutResponse: Decodable {
     let success: Bool
     let optedOut: Bool
+    /// ISO moment the block lifts (deletion + 24 hours). Absent from older
+    /// backends — the SDK then stamps its own clock + 24 hours.
+    let optedOutUntil: String?
 }

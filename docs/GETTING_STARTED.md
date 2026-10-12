@@ -32,14 +32,14 @@ The SDK uses SwiftUI for its presentation layer and requires a UIKit host app (U
    ```
    https://github.com/AVAFLI/avafli_ios_sdk.git
    ```
-3. Set the dependency rule to **Up to Next Major Version** from `3.1.4`
+3. Set the dependency rule to **Up to Next Major Version** from `3.2.0`
 4. Add the `AvafliSDK` library to your app target
 
 Or in `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.1.4")
+    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.2.0")
 ]
 ```
 
@@ -68,6 +68,7 @@ import AvafliSDK
 let config = AvafliConfiguration(
     apiKey: "YOUR_API_KEY",
     bundleId: "com.example.myapp",
+    autoOpen: .always,  // or .returningUsersOnly / .never
     user: AvafliUser(
         id: "user_123",
         firstName: "Jane",
@@ -93,8 +94,9 @@ One call, and the experience opens itself once per day. If your app needs to dec
 > address that already belongs to an existing Avafli account requires a 6-digit
 > code before the streak merges to this device (fresh signups and pre-filled
 > partner emails skip it), and a brand-new typed address gets a soft "verify
-> your email" chip on the dashboard — it never blocks daily play, only
-> prize-draw eligibility.
+> your email" chip on the dashboard — it never blocks daily play or the
+> prize draw. A winner proves their inbox with a 6-digit code before the claim
+> form (skipped if they already confirmed).
 
 ### Controlling when the drawer opens
 

@@ -24,7 +24,8 @@ public enum AvafliError: Error {
     /// surface their own "unavailable" messaging.
     case serviceUnavailable
     /// The user has exercised their right to delete (RTD) and opted out of Avafli.
-    /// The experience must never be presented to them again.
+    /// The experience is not presented to them; they may join again as a new
+    /// participant 24 hours after the deletion.
     case optedOut
     /// The backend geo-fence rejected the request (non-US or unverifiable
     /// location). The V2 experience renders a dedicated "Not available in

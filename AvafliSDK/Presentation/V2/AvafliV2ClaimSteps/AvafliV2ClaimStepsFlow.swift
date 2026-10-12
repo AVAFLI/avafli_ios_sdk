@@ -63,7 +63,18 @@ struct AvafliV2ClaimStepsFlow: View {
         self.claim = claim
         self.viewModel = viewModel
         self.onClose = onClose
-        _form = State(initialValue: viewModel.claimFormPrefill)
+        if let preserved = viewModel.preservedClaimForm {
+            // Back from the email-code step the server asked for mid-submit
+            // (3.2.0): everything the person typed is still here, and they
+            // land where they left — on the review screen.
+            _form = State(initialValue: preserved)
+            _photo = State(initialValue: preserved.photoBase64
+                .flatMap { Data(base64Encoded: $0) }
+                .flatMap { UIImage(data: $0) })
+            _step = State(initialValue: .review)
+        } else {
+            _form = State(initialValue: viewModel.claimFormPrefill)
+        }
     }
 
     var body: some View {
