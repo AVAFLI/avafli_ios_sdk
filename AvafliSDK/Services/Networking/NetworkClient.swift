@@ -235,6 +235,66 @@ final class URLSessionNetworkClient: NetworkClient {
     /// guaranteed 401 (same 60s leeway `KeychainStorage` applies).
     static let expiryLeeway: TimeInterval = 60
 
+    // MARK: Infrastructure-refusal retry (RESILIENCE_SPEC, Oct 15 2026)
+
+    /// When a traffic step outruns warm Cloud Run instances the platform
+    /// refuses the overflow with HTTP 429 or 500 and a PLAIN-TEXT body
+    /// ("The request was aborted because there was no available instance.");
+    /// instances arrive within ~10–30 s. Such a refusal — one of these
+    /// statuses AND a body that is not a callable error — is retried with
+    /// exponential backoff + full jitter before the host app sees anything.
+    /// Callable errors (our own rate limiters, resend cooldowns, geo,
+    /// consent, already-claimed) are answers, never retried here.
+    static let infraRefusalStatuses: Set<Int> = [429, 500, 502, 503, 504]
+    /// Base delays (seconds) — 4 retries, ≈15 s worst case.
+    static let infraRetryBaseDelays: [TimeInterval] = [1, 2, 4, 8]
+    /// Added to every jittered delay so a retry never fires immediately.
+    static let infraRetryJitterFloor: TimeInterval = 0.25
+    /// A `Retry-After` header is honoured up to this many seconds.
+    static let infraRetryAfterCap: TimeInterval = 10
+
+    /// The pause between infra-refusal retries (injectable for tests).
+    private let sleeper: (TimeInterval) async -> Void
+
+    /// `Task.sleep` wrapper. Safe to await from any actor, including the main
+    /// actor — it suspends the task, it never blocks a thread.
+    static func defaultSleep(_ seconds: TimeInterval) async {
+        guard seconds > 0 else { return }
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+    }
+
+    /// Delay before retry number `attempt` (0-based). A `Retry-After` wins
+    /// when present (bounded by the jitter floor and the 10 s cap);
+    /// otherwise full jitter over the base: `random(0, base) + floor`.
+    static func infraRetryDelay(
+        attempt: Int,
+        retryAfter: TimeInterval?,
+        random: (TimeInterval) -> TimeInterval = { Double.random(in: 0...$0) }
+    ) -> TimeInterval {
+        if let retryAfter, retryAfter > 0 {
+            return max(infraRetryJitterFloor, min(retryAfter, infraRetryAfterCap))
+        }
+        let base = infraRetryBaseDelays[min(max(attempt, 0), infraRetryBaseDelays.count - 1)]
+        return random(base) + infraRetryJitterFloor
+    }
+
+    /// `Retry-After` in seconds, when the header is present and numeric.
+    /// (The HTTP-date form is ignored — the jittered schedule applies.)
+    static func retryAfterSeconds(from response: HTTPURLResponse) -> TimeInterval? {
+        guard let raw = response.value(forHTTPHeaderField: "Retry-After")?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              let seconds = TimeInterval(raw), seconds.isFinite else { return nil }
+        return seconds
+    }
+
+    /// One `execute`'s view of an infrastructure refusal. Never leaves
+    /// `executeWithInfraRetry`, which surfaces `.internalError("HTTP n")`
+    /// once the schedule is exhausted.
+    private struct InfraRefusal: Error {
+        let status: Int
+        let retryAfter: TimeInterval?
+    }
+
     /// - Parameters:
     ///   - enablePinning: When `true` (the default), enforces SPKI certificate pinning.
     ///   - pinnedKeyHashes: Optional array of base64-encoded SHA-256 SPKI hashes.
@@ -243,6 +303,8 @@ final class URLSessionNetworkClient: NetworkClient {
     ///     the built-in Google Trust Services pins.
     ///   - session: Test seam — a stubbed `URLSession`. When set, pinning is
     ///     not applied (the session is used as given).
+    ///   - sleeper: Test seam — the pause between infrastructure-refusal
+    ///     retries. Defaults to a `Task.sleep` wrapper.
     init(
         baseURL: URL,
         apiKey: String,
@@ -250,12 +312,14 @@ final class URLSessionNetworkClient: NetworkClient {
         refreshHandler: (() async -> String?)? = nil,
         enablePinning: Bool = true,
         pinnedKeyHashes: [String]? = nil,
-        session: URLSession? = nil
+        session: URLSession? = nil,
+        sleeper: @escaping (TimeInterval) async -> Void = URLSessionNetworkClient.defaultSleep
     ) {
         self.baseURL = baseURL
         self.apiKey = apiKey
         self.tokenProvider = tokenProvider
         self.refreshHandler = refreshHandler
+        self.sleeper = sleeper
 
         if let session {
             self.session = session
@@ -277,19 +341,51 @@ final class URLSessionNetworkClient: NetworkClient {
             _ = await refreshGate.run(refreshHandler)
         }
 
-        let result = try await execute(request)
+        let result = try await executeWithInfraRetry(request)
 
         if case .failure(let error) = result,
            isAuthError(error),
            let refreshHandler = refreshHandler,
            authed {
             if let _ = await refreshGate.run(refreshHandler) {
-                let retryResult = try await execute(request)
+                let retryResult = try await executeWithInfraRetry(request)
                 return try retryResult.get()
             }
         }
 
         return try result.get()
+    }
+
+    /// `execute` inside the bounded infrastructure-refusal retry: up to
+    /// `infraRetryBaseDelays.count` retries on a 429/5xx whose body is not a
+    /// callable error, each after a jittered pause (or the server's
+    /// `Retry-After`). Everything else — success, callable errors, the 401
+    /// path, transport failures (thrown) — passes straight through.
+    private func executeWithInfraRetry<R>(_ request: R) async throws -> Result<R.Response, Error> where R: APIRequest {
+        let maxRetries = Self.infraRetryBaseDelays.count
+        var retries = 0
+        while true {
+            let result = try await execute(request)
+            guard case .failure(let error) = result, let refusal = error as? InfraRefusal else {
+                return result
+            }
+            if retries >= maxRetries {
+                Logger.shared.log(
+                    "[\(request.path)] Infrastructure refusal HTTP \(refusal.status) — giving up after \(retries) retries",
+                    level: .error
+                )
+                return .failure(AvafliError.internalError("HTTP \(refusal.status)"))
+            }
+            let delay = Self.infraRetryDelay(attempt: retries, retryAfter: refusal.retryAfter)
+            retries += 1
+            Logger.shared.log(
+                "[\(request.path)] Infrastructure refusal HTTP \(refusal.status) — retry \(retries)/\(maxRetries) in \(String(format: "%.2f", delay))s",
+                level: .debug
+            )
+            await sleeper(delay)
+            // A cancelled caller must not keep hammering a busy backend.
+            try Task.checkCancellation()
+        }
     }
 
     /// True when the JWT's `exp` is past or within `expiryLeeway`. A token
@@ -379,11 +475,21 @@ final class URLSessionNetworkClient: NetworkClient {
                     return .failure(AvafliError.internalError(errorBody.error.message))
                 }
                 // An undecodable non-2xx body (a load balancer's HTML 502, a
-                // proxy error page) is a SERVER outage, not a device
+                // proxy error page, Cloud Run's plain-text "no available
+                // instance" 429/500) is a SERVER outage, not a device
                 // connectivity problem — .network here produced "check your
-                // connection" for infrastructure failures. 5xx keeps a retry
-                // affordance via internalError's handling; the offline queue
-                // correctly refuses both (transport-only classifier).
+                // connection" for infrastructure failures. 429/5xx is an
+                // infrastructure refusal: `executeWithInfraRetry` retries it on
+                // the jittered schedule and surfaces internalError("HTTP n")
+                // only once exhausted. The offline queue correctly refuses
+                // both (transport-only classifier) — the server answered, it
+                // was just busy.
+                if Self.infraRefusalStatuses.contains(httpResponse.statusCode) {
+                    return .failure(InfraRefusal(
+                        status: httpResponse.statusCode,
+                        retryAfter: Self.retryAfterSeconds(from: httpResponse)
+                    ))
+                }
                 return .failure(AvafliError.internalError("HTTP \(httpResponse.statusCode)"))
             }
         }

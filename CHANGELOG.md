@@ -1,6 +1,27 @@
 # Changelog
 
 
+## 3.2.1 — 2026-10-15
+
+### Fixed
+
+- **Infrastructure refusals are retried, not surfaced.** When traffic outruns
+  warm backend instances the platform refuses the overflow with HTTP 429 or
+  500 and a plain-text body (no callable JSON) for the ~10–30 s it takes new
+  instances to arrive. The network client now classifies every non-2xx
+  response: a 429/500/502/503/504 whose body is NOT a callable error is an
+  infrastructure refusal and is retried up to 4 times with exponential
+  backoff and full jitter (base 1 s, 2 s, 4 s, 8 s; each delay is
+  `random(0, base)` + a 250 ms floor; a numeric `Retry-After` header is
+  honoured up to 10 s; ≈15 s worst case). Only after the schedule is
+  exhausted does the host app see the existing `.internalError("HTTP n")`.
+  Callable errors — our own rate limits (`RESOURCE_EXHAUSTED`), resend
+  cooldowns, geo, consent, already-claimed — are answers and are never
+  retried here; the 401 refresh-once path, transport-failure handling and
+  the offline queue's transport-only classifier (an exhausted refusal is
+  still not queued — the server answered, it was just busy) are unchanged.
+  Each retry is logged at debug level with status, attempt and delay.
+
 ## 3.2.0 — 2026-09-29
 
 ### Added
