@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'AvafliSDK'
-  s.version          = '3.2.1'
+  s.version          = '3.2.2'
   s.summary          = 'Sweepstakes-as-a-Service SDK for iOS apps'
   s.description      = <<-DESC
     Avafli SDK enables app publishers to instantly add sweepstakes and prizing

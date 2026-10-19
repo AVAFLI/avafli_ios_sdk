@@ -671,6 +671,89 @@ public enum Avafli {
         isNewUserThisSession = false
     }
 
+    /// 3.2.2 — What to do with identity-scoped local state after the server
+    /// answered about THIS account. Pure; the apply step is
+    /// [applyIdentityReconcile].
+    ///
+    /// Why: the "email submitted" flag, the streak snapshot and the
+    /// adoption-code stamp are cached locally and were only ever written, never
+    /// re-checked. When the account they describe is deleted or reset
+    /// server-side (data erasure, a database reset, a record that went away)
+    /// the next `registerDevice` mints a FRESH user — and the SDK kept
+    /// believing the old flags: it skipped email capture and auto-claimed, the
+    /// backend refused with "email required", and the person sat on a Day-1
+    /// dashboard that never advanced (Skape, Oct 2026). Mirrors web 3.1.10.
+    ///
+    /// Every rule needs a CURRENT backend; older backends omit these fields
+    /// and local state is left alone. An opted-out account is also left alone
+    /// — the 24-hour rejoin clears the whole session itself once the block
+    /// lifts, and until then local state is deliberately frozen.
+    enum IdentityReconcilePlan: Equatable {
+        case leaveAlone
+        /// `isNewUser == true`: the server has no history for this device —
+        /// drop every per-user key and any queued claim retry. A genuine first
+        /// install has nothing to drop, so this is a no-op there.
+        case dropAccountState
+        /// `emailConsentStatus == false` with no parked adoption: no email on
+        /// file — drop the email flag only (streak history is the server's and
+        /// is reconciled by the status call as usual). A parked adoption also
+        /// reports `false`, but that state is routed to the code screen and
+        /// must keep its stamp.
+        case dropEmailFlag
+    }
+
+    static func identityReconcilePlan(
+        isNewUser: Bool?, emailConsentStatus: Bool?, adoptionPending: Bool?, optedOut: Bool?
+    ) -> IdentityReconcilePlan {
+        if optedOut == true { return .leaveAlone }
+        if isNewUser == true { return .dropAccountState }
+        if emailConsentStatus == false, adoptionPending != true { return .dropEmailFlag }
+        return .leaveAlone
+    }
+
+    /// Applies a plan to the on-device keys for `bundleId` / `userId`
+    /// (the same keys the experience reads). Internal so tests can run it
+    /// against UserDefaults directly.
+    static func applyIdentityReconcile(
+        _ plan: IdentityReconcilePlan, bundleId: String, userId: String, defaults: UserDefaults = .standard
+    ) {
+        switch plan {
+        case .leaveAlone:
+            return
+        case .dropAccountState:
+            let userPrefix = "winr.\(bundleId).user."
+            for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(userPrefix) {
+                defaults.removeObject(forKey: key)
+            }
+            AvafliOfflineResilience.shared?.coordinator.clear(.claim)
+            Logger.shared.log("Fresh account from the server — stale local identity state dropped", level: .info)
+        case .dropEmailFlag:
+            defaults.removeObject(forKey: "winr.\(bundleId).user.\(userId).emailSubmitted")
+            Logger.shared.log("Server reports no email on file — stale local email flag dropped", level: .info)
+        }
+    }
+
+    /// Reconciles identity-scoped local state with the server's answer. Call
+    /// with `lock` HELD (it touches the cached flags).
+    private static func reconcileLocalIdentityLocked(
+        isNewUser: Bool?, emailConsentStatus: Bool?, adoptionPending: Bool?, optedOut: Bool?
+    ) {
+        guard let configuration else { return }
+        let plan = identityReconcilePlan(
+            isNewUser: isNewUser, emailConsentStatus: emailConsentStatus,
+            adoptionPending: adoptionPending, optedOut: optedOut
+        )
+        applyIdentityReconcile(plan, bundleId: configuration.bundleId, userId: configuration.user.id)
+        switch plan {
+        case .leaveAlone: break
+        case .dropAccountState:
+            cachedEmailConsent = emailConsentStatus ?? false
+            cachedClaimedToday = false
+        case .dropEmailFlag:
+            cachedEmailConsent = false
+        }
+    }
+
     /// Foreground trigger: lifts an opt-out whose time passed while the app
     /// stayed in memory, then registers. At most one registration per call.
     private static func rejoinIfOptOutLapsed() async {
@@ -835,6 +918,14 @@ public enum Avafli {
                         cachedAdoptionPending = response.adoptionPending
                         cachedPendingPrizeClaim = response.prizeClaim?.isPending == true
                         if response.optedOut == true { cachedOptedOut = true }
+                        // 3.2.2: an explicit "no email on file" drops the stale
+                        // local flag (the status call never mints a user).
+                        reconcileLocalIdentityLocked(
+                            isNewUser: nil,
+                            emailConsentStatus: response.emailConsentStatus,
+                            adoptionPending: response.adoptionPending,
+                            optedOut: response.optedOut
+                        )
                         bootRecoveryPending = false
                         lock.unlock()
                         persistOptOutIfNeeded(serverUntil: response.optedOutUntil)
@@ -860,6 +951,14 @@ public enum Avafli {
                     cachedAdoptionPending = response.adoptionPending
                     cachedPendingPrizeClaim = response.prizeClaim?.isPending == true
                     if response.optedOut == true { cachedOptedOut = true }
+                    // 3.2.2: an explicit "no email on file" drops the stale
+                    // local flag (the status call never mints a user).
+                    reconcileLocalIdentityLocked(
+                        isNewUser: nil,
+                        emailConsentStatus: response.emailConsentStatus,
+                        adoptionPending: response.adoptionPending,
+                        optedOut: response.optedOut
+                    )
                     bootRecoveryPending = false
                     lock.unlock()
                     persistOptOutIfNeeded(serverUntil: response.optedOutUntil)
@@ -910,6 +1009,13 @@ public enum Avafli {
             // First-ever registration of this device → `.returningUsersOnly`
             // skips this session's auto-open. Absent (older backend) → returning.
             isNewUserThisSession = response.isNewUser == true
+            // 3.2.2: the server's identity answer outranks anything cached here.
+            reconcileLocalIdentityLocked(
+                isNewUser: response.isNewUser,
+                emailConsentStatus: response.emailConsentStatus,
+                adoptionPending: response.adoptionPending,
+                optedOut: response.optedOut
+            )
             bootRecoveryPending = false
             lock.unlock()
             persistOptOutIfNeeded(serverUntil: response.optedOutUntil)

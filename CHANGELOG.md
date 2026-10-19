@@ -1,6 +1,31 @@
 # Changelog
 
 
+## 3.2.2 — 2026-10-19
+
+### Fixed
+
+- **A device whose account was reset on the server is no longer stuck on Day 1.**
+  The SDK cached the "email submitted" flag, the streak snapshot and the
+  adoption-code stamp and never re-checked them. When the account they
+  described was deleted or reset server-side (data erasure, a database reset,
+  a record that went away), the next `registerDevice` minted a fresh user and
+  the SDK — still trusting the stale flags — skipped email capture and
+  auto-claimed; the backend refused every claim with "email required" and
+  nothing was ever recorded (Skape, Oct 2026). The server's answer now wins:
+  a `registerDevice` that reports `isNewUser: true` drops every per-user key
+  and any queued claim retry (a genuine first install has nothing to drop); a
+  `registerDevice` or status response that reports `emailConsentStatus: false`
+  with no parked adoption drops the email flag, so the drawer lands on email
+  capture, whose Day-1 path claims right after the submit. Older backends that
+  omit these fields leave local state alone; an opted-out account is left to
+  the 24-hour rejoin. Mirrors web 3.1.10 / Flutter 3.2.2. Nothing for the
+  host app to do.
+
+### Added
+
+- `RegisterDeviceResponse.emailConsentStatus` (the backend has always sent it).
+
 ## 3.2.1 — 2026-10-15
 
 ### Fixed

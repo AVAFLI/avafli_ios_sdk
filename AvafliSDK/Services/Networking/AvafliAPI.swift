@@ -68,6 +68,11 @@ struct RegisterDeviceResponse: Decodable {
     /// skips the auto-open for exactly this session. OPTIONAL — an older
     /// backend omits it and the user is treated as returning (auto-open).
     let isNewUser: Bool?
+    /// 3.2.2: whether the backend has an email on file for this user (and no
+    /// adoption is parked). The backend has always sent it. An explicit
+    /// `false` means the local "email submitted" flag is stale and is dropped;
+    /// absent (older backend) leaves local state alone.
+    let emailConsentStatus: Bool?
 }
 
 // MARK: - SDK Config (server-driven copy & branding)

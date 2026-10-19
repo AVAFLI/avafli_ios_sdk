@@ -633,6 +633,16 @@ final class AvafliExperienceViewModel: ObservableObject {
                 // (Sept 2026 field report).
                 if response.emailConsentStatus == true, response.adoptionPending != true {
                     try? storage.save(true, for: emailSubmittedKey)
+                } else if Avafli.identityReconcilePlan(
+                    isNewUser: nil, emailConsentStatus: response.emailConsentStatus,
+                    adoptionPending: response.adoptionPending, optedOut: response.optedOut
+                ) == .dropEmailFlag {
+                    // 3.2.2: an explicit "no email on file" means the local flag
+                    // is stale (the account was reset server-side). Drop it so the
+                    // gate below lands on email capture instead of an auto-claim
+                    // the backend will refuse — which left the person on a Day-1
+                    // dashboard that never advanced (Skape, Oct 2026).
+                    try? storage.remove(for: emailSubmittedKey)
                 }
 
                 // Soft email-verification signal: ONLY an explicit `false` means
