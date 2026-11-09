@@ -101,6 +101,10 @@ struct AvafliV2PrizeCard: View {
     let prizeValue: Int
     let prizeDescription: String
     var visitMode = false
+    /// 3.3.0 — network giveaway sponsor line ("Sponsored by Avafli LLC"),
+    /// drawn as one muted line directly under the prize headline. Nil (every
+    /// exclusive giveaway) draws nothing and leaves the card pixel-identical.
+    var sponsorDisclosure: String? = nil
 
     /// Cash prizes render Joe's right-aligned "WIN $1,000 / CASH PRIZE" lockup;
     /// other prizes render "Win a {Prize}" + "$X.00 VALUE!".
@@ -186,9 +190,11 @@ struct AvafliV2PrizeCard: View {
         .background(Color.black)
     }
 
-    /// Prize headline over the bottom scrim.
+    /// Prize headline over the bottom scrim. The outer VStack has exactly one
+    /// child for an exclusive giveaway (so no spacing is ever applied and the
+    /// lockup is unchanged); a network giveaway appends the sponsor line.
     private var headline: some View {
-        Group {
+        VStack(alignment: isCashPrize ? .trailing : .center, spacing: 4) {
             if isCashPrize {
                 // "WIN $1,000" (Black 44) over "CASH PRIZE" (Black 19), right-aligned.
                 VStack(alignment: .trailing, spacing: -5) {
@@ -221,6 +227,13 @@ struct AvafliV2PrizeCard: View {
                 }
                 .frame(maxWidth: .infinity)
             }
+            if let sponsorDisclosure {
+                AvafliV2SponsorDisclosureLine(
+                    text: sponsorDisclosure,
+                    color: AvafliV2Color.textSecondary,
+                    alignment: isCashPrize ? .trailing : .center
+                )
+            }
         }
         .padding(.horizontal, 14)
         .padding(.top, 34)
@@ -235,6 +248,32 @@ struct AvafliV2PrizeCard: View {
                 startPoint: .top, endPoint: .bottom
             )
         )
+    }
+}
+
+// MARK: - Sponsor disclosure (network giveaway)
+
+/// 3.3.0 — The one treatment for the network-giveaway sponsor line
+/// ("Sponsored by Avafli LLC"): 12pt Inter medium, muted, single line, drawn
+/// directly beneath the prize wherever it is presented (dashboard prize card,
+/// Day-1 capture strip). Callers render it ONLY when the giveaway carries a
+/// non-blank `sponsorDisclosure`, so exclusive giveaways never mount it.
+struct AvafliV2SponsorDisclosureLine: View {
+    let text: String
+    /// Secondary-text color for the surface it sits on (light-on-dark for the
+    /// prize card scrim, dark-on-white for the capture strip).
+    let color: Color
+    var alignment: Alignment = .center
+
+    var body: some View {
+        Text(text)
+            .font(AvafliV2Font.inter(12, .medium))
+            .foregroundColor(color)
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+            .multilineTextAlignment(alignment == .trailing ? .trailing : .center)
+            .frame(maxWidth: .infinity, alignment: alignment)
+            .accessibilityLabel(text)
     }
 }
 

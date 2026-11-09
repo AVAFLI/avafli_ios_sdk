@@ -224,6 +224,7 @@ struct AvafliV2WinnerClaimFlow: View {
                         description: claim.prizeDescription,
                         value: Int(claim.prizeValue)
                     ),
+                    sponsorDisclosure: claim.sponsorDisclosureLine,
                     onContinue: { viewModel.winnerClaimContinue() },
                     onClose: { viewModel.requestDismiss() }
                 )
@@ -392,6 +393,10 @@ struct AvafliV2WinnerSplashView: View {
     let accent: Color
     let logoUrl: String?
     let prizeHeadline: String
+    /// 3.3.0 — Network-giveaway sponsor line from the claim block
+    /// (`PrizeClaimBlock.sponsorDisclosureLine`). Nil → nothing mounts and
+    /// the white prize strip is exactly as before.
+    var sponsorDisclosure: String? = nil
     let onContinue: () -> Void
     let onClose: () -> Void
 
@@ -433,17 +438,29 @@ struct AvafliV2WinnerSplashView: View {
 
                     // Full-width white strip with the prize-derived headline
                     // (same derivation as the Day-1 capture strip).
-                    Text(prizeHeadline)
-                        .font(AvafliV2Font.inter(28, .black))
-                        .kerning(-0.8)
-                        .foregroundColor(AvafliV2Color.gunmetal)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.6)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 16)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(Color.white)
+                    VStack(spacing: 0) {
+                        Text(prizeHeadline)
+                            .font(AvafliV2Font.inter(28, .black))
+                            .kerning(-0.8)
+                            .foregroundColor(AvafliV2Color.gunmetal)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.6)
+                            .multilineTextAlignment(.center)
+                        // 3.3.0: network giveaway sponsor line, directly under
+                        // the prize — same treatment as the Day-1 capture strip
+                        // (muted gunmetal on white). Absent → nothing mounts.
+                        if let sponsorDisclosure {
+                            AvafliV2SponsorDisclosureLine(
+                                text: sponsorDisclosure,
+                                color: AvafliV2Color.gunmetal.opacity(0.7)
+                            )
+                            .padding(.top, 2)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(Color.white)
 
                     Text("To process your prize, we just need a few details.")
                         .font(AvafliV2Font.inter(15))

@@ -1,6 +1,26 @@
 # Changelog
 
 
+## 3.3.0 — 2026-11-08
+
+### Added
+
+- **Network giveaway sponsor disclosure.** The giveaway payload (the
+  `giveaway` field of `registerDevice` and `getActiveGiveaway`) may carry
+  `scope: "network"` and `sponsorDisclosure` (e.g. "Sponsored by Avafli LLC")
+  when the SDK is serving the shared network giveaway. The SDK shows the
+  sponsor line as one small muted line directly under the prize wherever the
+  prize is presented: the dashboard prize card (`AvafliV2PrizeCard`, which is
+  also what auto-open / `present()` show) and the Day-1 email-capture prize
+  strip (`AvafliV2CaptureView`). Both fields are optional and decode as nil
+  when absent. No change for exclusive giveaways — nothing is drawn and the
+  layout is untouched. Nothing for the host app to do.
+- **Winner splash and claim screens show the sponsor line from the claim
+  block.** The `prizeClaim` block (`PrizeClaimBlock`) now decodes the same
+  optional `scope` / `sponsorDisclosure` pair, and the winner splash
+  (`AvafliV2WinnerSplashView`) draws the sponsor line directly under the
+  prize headline. Absent → nil, nothing mounts.
+
 ## 3.2.2 — 2026-10-19
 
 ### Fixed

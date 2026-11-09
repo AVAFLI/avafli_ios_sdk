@@ -32,14 +32,14 @@ The SDK uses SwiftUI for its presentation layer and requires a UIKit host app (U
    ```
    https://github.com/AVAFLI/avafli_ios_sdk.git
    ```
-3. Set the dependency rule to **Up to Next Major Version** from `3.2.0`
+3. Set the dependency rule to **Up to Next Major Version** from `3.3.0`
 4. Add the `AvafliSDK` library to your app target
 
 Or in `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.2.0")
+    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.3.0")
 ]
 ```
 
@@ -196,3 +196,7 @@ Route SDK events to your analytics stack by passing an `AnalyticsAdapter` in `Av
 - [API Reference](API_REFERENCE.md) — every public type and method
 - [Code Examples](CODE_EXAMPLES.md) — copy-paste integration recipes
 - [README](../README.md) — canonical overview and API tables
+
+## Free online entry (AMOE)
+
+Every giveaway has a public free-entry form at `https://sdk.avafli.com/enter/<your-publisher-segment>/amoe?g=<giveawayId>` (your dashboard's Giveaway Management section shows the exact URL with a copy button). You can customise the part after your publisher segment from the same place ("Edit link"), e.g. `…/enter/skape/spring-sweeps`; the publisher segment itself is assigned by Avafli, and an old link keeps working after a change. List it as the **Online AMOE Web URL** in your Client Addendum (Official Rules §11(E)). Anyone can request their free daily entries there without installing your app; the entries go into the same drawing pool as in-app entries and never earn streak bonuses. The form carries your logo, accent colour, prize and consent copy from the same SDK configuration your app uses — nothing to integrate.

@@ -302,6 +302,24 @@ struct GiveawayConfig: Codable {
     /// the Aug 31 GTM decision the banner ALSO requires the admin-set
     /// sdkConfig.experience.winnerBannerEnabled flag (default off).
     let latestWinner: GiveawayWinner?
+    /// 3.3.0 — `"network"` when this is the shared network giveaway (one prize
+    /// pool across many publisher apps, Avafli LLC as Sponsor of Record).
+    /// Absent / `"publisher"` for a normal exclusive giveaway.
+    let scope: String?
+    /// 3.3.0 — Short sponsor line ("Sponsored by Avafli LLC"), present only
+    /// for network giveaways. Legally it MUST render wherever the prize is
+    /// presented; absent → nothing is drawn and the layout is unchanged.
+    let sponsorDisclosure: String?
+
+    var isNetworkGiveaway: Bool { scope == "network" }
+
+    /// The sponsor line to draw under the prize, or nil when there is none
+    /// (absent, or blank after trimming).
+    var sponsorDisclosureLine: String? {
+        guard let line = sponsorDisclosure?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !line.isEmpty else { return nil }
+        return line
+    }
 
     init(
         id: String, title: String, prizeDescription: String, prizeValue: Double,
@@ -309,7 +327,8 @@ struct GiveawayConfig: Codable {
         rulesUrl: String, startDate: String, endDate: String,
         streakConfig: StreakConfigAPI, milestones: [MilestoneConfigAPI]? = nil,
         prizeImageUrl: String? = nil,
-        streakMode: String? = nil, latestWinner: GiveawayWinner? = nil
+        streakMode: String? = nil, latestWinner: GiveawayWinner? = nil,
+        scope: String? = nil, sponsorDisclosure: String? = nil
     ) {
         self.id = id; self.title = title; self.prizeDescription = prizeDescription
         self.prizeValue = prizeValue; self.streakLadder = streakLadder
@@ -318,6 +337,7 @@ struct GiveawayConfig: Codable {
         self.streakConfig = streakConfig; self.milestones = milestones
         self.prizeImageUrl = prizeImageUrl
         self.streakMode = streakMode; self.latestWinner = latestWinner
+        self.scope = scope; self.sponsorDisclosure = sponsorDisclosure
     }
 }
 
@@ -644,8 +664,26 @@ struct PrizeClaimBlock: Codable {
     /// the claim is pending and the platform flag is on; absent → today's
     /// flow. The server holds this state — the SDK only mirrors it in memory.
     var verification: ClaimVerificationBlock?
+    /// 3.3.0 — `"network"` when the won prize belongs to the shared network
+    /// giveaway. Absent for an exclusive (publisher) giveaway. The draw clears
+    /// the publisher's network pointer, so the winner's app cannot borrow this
+    /// from `GiveawayConfig` — the claim block carries its own copy.
+    let scope: String?
+    /// 3.3.0 — Sponsor line ("Sponsored by Avafli LLC") for a network-giveaway
+    /// win; drawn under the prize on the winner splash. Absent → nothing drawn.
+    let sponsorDisclosure: String?
 
     var isPending: Bool { status == "pending" }
+
+    var isNetworkGiveaway: Bool { scope == "network" }
+
+    /// The sponsor line to draw under the prize, or nil when there is none
+    /// (absent, or blank after trimming). Same rule as `GiveawayConfig`.
+    var sponsorDisclosureLine: String? {
+        guard let line = sponsorDisclosure?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !line.isEmpty else { return nil }
+        return line
+    }
 
     // Lenient decode: a malformed block (null/missing prize fields from an
     // older winner doc) must degrade gracefully, never fail the whole
@@ -660,6 +698,8 @@ struct PrizeClaimBlock: Codable {
         claimNumber = try c.decodeIfPresent(String.self, forKey: .claimNumber)
         submittedAt = try c.decodeIfPresent(String.self, forKey: .submittedAt)
         verification = try? c.decodeIfPresent(ClaimVerificationBlock.self, forKey: .verification)
+        scope = try? c.decodeIfPresent(String.self, forKey: .scope)
+        sponsorDisclosure = try? c.decodeIfPresent(String.self, forKey: .sponsorDisclosure)
     }
 }
 

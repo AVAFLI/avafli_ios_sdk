@@ -785,6 +785,16 @@ struct AvafliV2CaptureView: View {
                 Text("$\(value.formatted()).00 Value!")
                     .font(AvafliV2Font.inter(16))
             }
+            // 3.3.0: network giveaway sponsor line, directly under the prize.
+            // Absent for exclusive giveaways → nothing mounts, strip unchanged.
+            if let sponsorDisclosure = giveaway?.sponsorDisclosureLine {
+                AvafliV2SponsorDisclosureLine(
+                    text: sponsorDisclosure,
+                    color: AvafliV2Color.gunmetal.opacity(0.7)
+                )
+                .padding(.top, 2)
+                .padding(.horizontal, 16)
+            }
         }
         .foregroundColor(AvafliV2Color.gunmetal)
         .frame(maxWidth: .infinity)
@@ -932,7 +942,8 @@ struct AvafliV2DashboardView: View {
                         prizeImageUrl: giveaway?.prizeImageUrl,
                         prizeValue: Int(giveaway?.prizeValue ?? 0),
                         prizeDescription: giveaway?.prizeDescription ?? "",
-                        visitMode: visitMode
+                        visitMode: visitMode,
+                        sponsorDisclosure: giveaway?.sponsorDisclosureLine
                     )
                     .padding(.horizontal, 22)
 

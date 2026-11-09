@@ -1,6 +1,6 @@
 # Avafli SDK — API Reference
 
-The [README](../README.md) is the canonical overview of the SDK; this page documents every public symbol as of 3.2.1.
+The [README](../README.md) is the canonical overview of the SDK; this page documents every public symbol as of 3.3.0.
 
 ## Table of Contents
 
@@ -281,7 +281,7 @@ Event-name constants emitted by the SDK:
 
 ```swift
 public enum AvafliConstants {
-    public static let sdkVersion = "3.2.1"
+    public static let sdkVersion = "3.3.0"
     public static let platformOS = "iOS"
 }
 ```
