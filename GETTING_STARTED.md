@@ -17,7 +17,7 @@ The V2 experience is a bottom drawer that opens itself on the first app-open of 
 | iOS | 15.0+ |
 | Xcode | 15.0+ |
 | Swift | 5.9+ |
-| Publisher API Key | Contact team@avafli.com |
+| Publisher API Key | Contact info@avafli.com |
 
 The SDK uses SwiftUI for its presentation layer and requires a UIKit host app (UIViewController-based presentation).
 
@@ -32,14 +32,14 @@ The SDK uses SwiftUI for its presentation layer and requires a UIKit host app (U
    ```
    https://github.com/AVAFLI/avafli_ios_sdk.git
    ```
-3. Set the dependency rule to **Up to Next Major Version** from `3.0.0`
+3. Set the dependency rule to **Up to Next Major Version** from `3.3.0`
 4. Add the `AvafliSDK` library to your app target
 
 Or in `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.0.0")
+    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.3.0")
 ]
 ```
 
@@ -68,6 +68,7 @@ import AvafliSDK
 let config = AvafliConfiguration(
     apiKey: "YOUR_API_KEY",
     bundleId: "com.example.myapp",
+    autoOpen: .always,  // or .returningUsersOnly / .never
     user: AvafliUser(
         id: "user_123",
         firstName: "Jane",
@@ -85,7 +86,7 @@ Auto-open behavior:
 - Unregistered users (no confirmed email) see at most 3 auto-opens, then the SDK goes quiet until they register.
 - Users who opted out (Right-to-Delete) never see the experience again.
 
-The auto-open is the only way the experience appears — there is no manual launch API. One call, and the experience opens itself once per day.
+One call, and the experience opens itself once per day. If your app needs to decide the moment, see [Controlling when the drawer opens](#controlling-when-the-drawer-opens) below.
 
 > **Email:** If your app has an authenticated session, pass the user's email via `AvafliUser(email:)`. The capture screen then shows that address pre-filled and **locked** (read-only) — Avafli links accounts across devices by email, so a partner-authenticated address is the most reliable identity. Consent remains an explicit act inside the Avafli flow: the user still sees the address, ticks the age (and optionally marketing) boxes, and submits. A malformed email is ignored and the field stays editable. If your app has no signed-in user, pass `AvafliUser.guest` — the SDK mints a stable per-install guest id and captures email through its own consent UI.
 >
@@ -93,14 +94,42 @@ The auto-open is the only way the experience appears — there is no manual laun
 > address that already belongs to an existing Avafli account requires a 6-digit
 > code before the streak merges to this device (fresh signups and pre-filled
 > partner emails skip it), and a brand-new typed address gets a soft "verify
-> your email" chip on the dashboard — it never blocks daily play, only
-> prize-draw eligibility.
+> your email" chip on the dashboard — it never blocks daily play or the
+> prize draw. A winner proves their inbox with a 6-digit code before the claim
+> form (skipped if they already confirmed).
+
+### Controlling when the drawer opens
+
+The default is unchanged: the drawer opens itself once a day on app open. Three controls change that when you need to:
+
+- **`autoOpen` on the configuration** — `.always` (default), `.returningUsersOnly`, or `.never`. `.returningUsersOnly` keeps the drawer out of a first-time user's onboarding: it skips the auto-open on the launch where the device is first registered, then auto-opens normally on every later launch. `.never` means the SDK never auto-opens and you call `Avafli.present()`.
+- **`Avafli.present()`** — open the drawer from a button, a screen, or an onboarding-complete handler. It ignores the once-a-day rule and the impression cap, waits for registration if it is still in flight, and no-ops if the drawer is already open or the user has opted out. Returns `false` when there is nothing to show; the completion receives the `DailyEntryGrant` once today's entry is claimed.
+- **`Avafli.holdAutoOpen()` / `Avafli.releaseAutoOpen()`** — for boot flows. Call `holdAutoOpen()` before configuring to defer the daily auto-open (nothing is burned — no once-a-day mark, no impression), and `releaseAutoOpen()` once your main screen is ready; it re-runs the eligibility check immediately. `present()` still works while held.
+
+```swift
+let config = AvafliConfiguration(
+    apiKey: "YOUR_API_KEY",
+    bundleId: "com.example.myapp",
+    user: AvafliUser(id: "user_123"),
+    autoOpen: .never   // .always (default) | .returningUsersOnly | .never
+)
+Avafli.configure(config)
+
+// Later — e.g. from your onboarding-complete handler
+func onboardingDidComplete() {
+    Avafli.present { result in
+        // .success(grant) once today's entry is claimed; .failure(error) otherwise
+    }
+}
+```
+
+Registration and analytics (DAU/MAU) run on configure regardless of mode.
 
 ---
 
 ## Test with Your Sandbox Key
 
-Your dashboard shows a `winr_test_…` key alongside your live key. Use it in
+Your dashboard shows a `avafli_test_…` key alongside your live key. Use it in
 debug builds: same production backend, identical behavior, but users and
 entries land in an isolated sandbox tenant — testers can never enter your real
 giveaway, and sandbox usage never counts toward MAU. Your registered bundle
@@ -153,12 +182,12 @@ Route SDK events to your analytics stack by passing an `AnalyticsAdapter` in `Av
 
 ---
 
-## Privacy (GDPR / CCPA)
+## Privacy & Account Deletion
 
 - The SDK collects no advertising identifiers and never shows the App Tracking Transparency prompt.
-- `try await Avafli.optOut()` — Right-to-Delete opt-out: tombstones the person on the backend (identity-wide, PII scrubbed, survives reinstall) and permanently silences the experience on this device. Wire this to the opt-out action in your privacy-policy flow if you have one.
-- Users can also delete their own data in-experience: the Privacy Policy — which every legal link (Official Rules • Privacy Policy rows, capture-screen links) opens in an in-app webview — contains a **Delete my data & stop participating** section that confirms and performs the same opt-out.
-- `optOut()` is the only erasure API — there is no hard-delete of entry records, which would leave no tombstone and enable same-day entry farming.
+- **Account deletion in your app:** if your app has its own delete-account flow, call `try await Avafli.optOut()` from it so the user's Avafli data is erased along with their account (identity-wide, PII scrubbed, survives reinstall — the experience is permanently silenced on this device).
+- Users can also delete their data themselves at any time — no integration required: every legal link opens the Privacy Policy in an in-app webview, and its **Delete my data & stop participating** section confirms and performs the same erasure.
+- `optOut()` is the only erasure API — de-identified entry records are retained as the legally required evidence that drawings were fair.
 
 ---
 
@@ -167,3 +196,7 @@ Route SDK events to your analytics stack by passing an `AnalyticsAdapter` in `Av
 - [API Reference](API_REFERENCE.md) — every public type and method
 - [Code Examples](CODE_EXAMPLES.md) — copy-paste integration recipes
 - [README](../README.md) — canonical overview and API tables
+
+## Free online entry (AMOE)
+
+Every giveaway has a public free-entry form at `https://sdk.avafli.com/enter/<your-publisher-segment>/amoe?g=<giveawayId>` (your dashboard's Giveaway Management section shows the exact URL with a copy button). You can customise the part after your publisher segment from the same place ("Edit link"), e.g. `…/enter/skape/spring-sweeps`; the publisher segment itself is assigned by Avafli, and an old link keeps working after a change. List it as the **Online AMOE Web URL** in your Client Addendum (Official Rules §11(E)). Anyone can request their free daily entries there without installing your app; the entries go into the same drawing pool as in-app entries and never earn streak bonuses. The form carries your logo, accent colour, prize and consent copy from the same SDK configuration your app uses — nothing to integrate.
