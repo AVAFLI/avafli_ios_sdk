@@ -20,6 +20,7 @@ Avafli lets you add daily-entry sweepstakes and prize experiences to your app in
 - **Cross-device verified adoption** — Typing an email that matches an existing Avafli account requires a 6-digit code before the streak merges to the new device
 - **"Verify your email" soft-verification** — A persistent chip on the dashboard lets users confirm a brand-new typed address; it never blocks daily play or the prize draw; confirming early means no code step if they win
 - **Winner announcements** — "WE HAVE A WINNER!" banner and winner dialog, driven by the giveaway's `latestWinner`
+- **Network giveaway sponsor line** — When a publisher opts into the shared network giveaway (Avafli LLC as Sponsor of Record), a small "Sponsored by Avafli LLC" line renders under the prize; exclusive giveaways show nothing extra
 - **Visit mode** — A never-resetting streak variant for low-frequency apps
 - **Push reminders** — Drive re-engagement with daily nudges (FCM, with local fallback)
 - **Server-driven branding** — Logo, prize image, and primary color update without app releases
@@ -265,6 +266,10 @@ When one of your users is drawn as a giveaway winner, the drawer automatically o
 ### Prize claims
 
 Before the claim form opens, a winner proves they control the inbox on file by entering a 6-digit code the SDK has emailed to their registered address (Official Rules §7). Winners who proved the inbox earlier skip the step. The state of the step lives on the server, so a winner who closes the drawer, switches device or reinstalls resumes exactly where they were. There is nothing for the host app to do.
+
+### Network giveaways: sponsor disclosure (3.3.0)
+
+A publisher can opt into the **network giveaway** — one shared prize pool across many Avafli apps, with Avafli LLC as Sponsor of Record. The served giveaway then carries `scope: "network"` and a short `sponsorDisclosure` string (for example "Sponsored by Avafli LLC"), and so does the winner's `prizeClaim` block. The SDK shows that line, small and muted, directly under the prize wherever the prize is presented: the Day-1 email-capture strip, the dashboard prize card and the winner splash. The disclosure is legally required and cannot be turned off. For an exclusive (publisher-sponsored) giveaway both fields are absent and nothing changes — the drawer looks exactly as it did in 3.2.2. Nothing for the host app to do.
 
 ## Push Notifications
 
