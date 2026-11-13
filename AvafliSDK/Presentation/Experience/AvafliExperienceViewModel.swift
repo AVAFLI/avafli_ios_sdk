@@ -222,6 +222,11 @@ final class AvafliExperienceViewModel: ObservableObject {
     var activeGiveawayConfig: GiveawayConfig? { activeGiveaway }
     private weak var presentingViewController: UIViewController?
     private let completion: (Result<DailyEntryGrant, AvafliError>) -> Void
+    /// 3.3.2 — `present(completion:)` receives `.success(grant)` the first
+    /// time THIS presentation records today's entries (auto-claim, Day-1
+    /// claim after email submit, or the silent claim behind the winner flow).
+    /// One delivery per presentation; nothing on later reconciles.
+    private var grantDelivered = false
     private let streakEngine: StreakEngineProtocol
     private var lastPrimaryState: State?
     private var activeGiveaway: GiveawayConfig?
@@ -1220,12 +1225,7 @@ final class AvafliExperienceViewModel: ObservableObject {
     private func claimAndStageBeforeDashboard() async {
         do {
             let response = try await container.network.send(ClaimDailyEntriesRequest())
-            var bonusEntries = 0
-            if let weekly = response.weeklyBonusEntries { bonusEntries += weekly }
-            if let monthly = response.monthlyBonusEntries { bonusEntries += monthly }
-            if let milestone = response.milestone { bonusEntries += milestone.bonusEntries }
-            if let monthlyMilestone = response.monthlyMilestone { bonusEntries += monthlyMilestone.bonusEntries }
-            let grant = DailyEntryGrant(baseEntries: response.entries, bonusEntries: bonusEntries)
+            let grant = Self.grant(from: response)
 
             lastClaimTotalEntries = response.totalEntries
             cachedBackendTotalEntries = response.totalEntries
@@ -1244,6 +1244,7 @@ final class AvafliExperienceViewModel: ObservableObject {
                 properties: ["day": response.streakDay, "entries": response.entries]
             )
             Avafli.clearOfflineClaimRetry()
+            deliverGrantOnce(grant)
         } catch {
             Logger.shared.log("Day-1 claim after email submit failed (dashboard will retry): \(error)", level: .info)
             Avafli.enqueueOfflineClaimRetry(for: error)
@@ -1289,26 +1290,11 @@ final class AvafliExperienceViewModel: ObservableObject {
         Task {
             do {
                 let response = try await container.network.send(ClaimDailyEntriesRequest())
-                
-                // Handle bonus entries from all sources (milestones, weekly/monthly bonuses)
-                var streakBonusEntries = 0
-                if let weeklyBonus = response.weeklyBonusEntries {
-                    streakBonusEntries += weeklyBonus
-                }
-                if let monthlyBonus = response.monthlyBonusEntries {
-                    streakBonusEntries += monthlyBonus
-                }
-                if let milestone = response.milestone {
-                    streakBonusEntries += milestone.bonusEntries
-                }
-                if let monthlyMilestone = response.monthlyMilestone {
-                    streakBonusEntries += monthlyMilestone.bonusEntries
-                }
-                
+
                 // Keep baseEntries as just the daily ladder amount;
                 // streak bonuses (monthly/weekly/milestone) go into bonusEntries
                 // so the UI can show a proper breakdown.
-                let grant = DailyEntryGrant(baseEntries: response.entries, bonusEntries: streakBonusEntries)
+                let grant = Self.grant(from: response)
                 lastClaimTotalEntries = response.totalEntries
                 // Keep the display caches in sync so the post-celebration dashboard
                 // shows the fresh totals (not the pre-claim snapshot).
@@ -1344,6 +1330,7 @@ final class AvafliExperienceViewModel: ObservableObject {
                     // onAppear found nothing pending — fire the reveal now.
                     armCelebrationReveal()
                     isClaimingDaily = false
+                    deliverGrantOnce(grant)
                     return
                 }
 
@@ -1601,6 +1588,7 @@ final class AvafliExperienceViewModel: ObservableObject {
                     self.cachedBackendStreakDay = response.streakDay
                     self.cachedBackendTotalEntries = response.totalEntries
                     self.claimedToday = true
+                    self.deliverGrantOnce(Self.grant(from: response))
                 }
                 Logger.shared.log("Silent daily claim during winner flow: +\(response.entries)", level: .debug)
                 Avafli.clearOfflineClaimRetry()
@@ -2002,10 +1990,34 @@ final class AvafliExperienceViewModel: ObservableObject {
 
     // MARK: - Completion
 
+    /// The entries one claim response granted: `baseEntries` is the ladder
+    /// amount for the day, `bonusEntries` the weekly / monthly / milestone
+    /// bonuses, so the UI (and the host's `DailyEntryGrant`) can break it down.
+    static func grant(from response: ClaimDailyEntriesResponse) -> DailyEntryGrant {
+        var bonusEntries = 0
+        if let weekly = response.weeklyBonusEntries { bonusEntries += weekly }
+        if let monthly = response.monthlyBonusEntries { bonusEntries += monthly }
+        if let milestone = response.milestone { bonusEntries += milestone.bonusEntries }
+        if let monthlyMilestone = response.monthlyMilestone { bonusEntries += monthlyMilestone.bonusEntries }
+        return DailyEntryGrant(baseEntries: response.entries, bonusEntries: bonusEntries)
+    }
+
+    /// Hands the host's `present(completion:)` the grant — once per
+    /// presentation, on the main thread, the moment the backend records
+    /// today's entries. Every claim site in this presentation routes here;
+    /// a second successful claim in the same presentation (reconcile,
+    /// retry) is not reported again.
+    @MainActor
+    private func deliverGrantOnce(_ grant: DailyEntryGrant) {
+        guard !grantDelivered else { return }
+        grantDelivered = true
+        completion(.success(grant))
+    }
+
     @MainActor
     private func complete(with grant: DailyEntryGrant) {
         state = .completed(grant)
         container.analytics?.trackExperienceClosed(giveawayId: activeGiveaway?.id)
-        completion(.success(grant))
+        deliverGrantOnce(grant)
     }
 }

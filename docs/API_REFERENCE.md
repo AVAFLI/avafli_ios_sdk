@@ -1,4 +1,4 @@
-# Avafli iOS SDK — API Reference (3.3.0)
+# Avafli iOS SDK — API Reference (3.3.2)
 
 Every `public` symbol exported by the `AvafliSDK` module, taken from the source.
 Symbols are grouped by whether a host app is expected to call them.
@@ -71,10 +71,18 @@ receives `.failure(.giveawayNotActive)`.
 `.failure` with one of `.notConfigured`, `.serviceUnavailable`, `.optedOut`,
 `.giveawayNotActive`, `.noPresentingViewController`.
 
-**`.success(DailyEntryGrant)` is not delivered by the 3.3.0 experience.** The
-drawer claims the day's entries automatically on open and that path does not
-call back; observe `avafli_daily_entry_claimed` through your `AnalyticsAdapter`
-instead.
+**`.success(DailyEntryGrant)`** (3.3.2) is delivered **once per presentation,
+on the main thread, the moment that presentation records today's entries**:
+the automatic claim on open, the Day-1 claim right after email submit, or the
+silent claim behind a winner's prize flow. The grant is the backend's answer
+(`baseEntries` from the ladder, `bonusEntries` from weekly / monthly /
+milestone bonuses). The completion is **not** called when the presentation
+claims nothing — the day was already claimed, the person is still on email
+capture, or the claim failed and was queued for an offline retry (that later
+recovery is reported only as `avafli_daily_entry_claimed` with
+`recovered_offline: true`). `.success` and `.failure` are mutually exclusive
+for one call. The same moment is also sent to your `AnalyticsAdapter` as
+`avafli_daily_entry_claimed`, which additionally covers the auto-open.
 
 ### `holdAutoOpen()` / `releaseAutoOpen()`
 
@@ -90,27 +98,16 @@ deliberately not cleared by `configure(_:)`. `releaseAutoOpen()` clears the
 hold and immediately re-runs the eligibility check (applying the effective
 auto-open mode). Both are safe before `configure(_:)` and idempotent.
 
-### `optOut()`
+### Account deletion — no API
 
-```swift
-public static func optOut() async throws
-```
-
-Right-to-delete. Erases the person on the backend — identity-wide across all
-their devices, PII anonymised including prize-claim records, entries and
-streaks forfeited — and silences the experience on this device. For 24 hours
-that email and this device cannot register (the backend returns the exact
-moment the block lifts; the SDK persists it); `present()` is refused with
-`.optedOut` and the auto-open is suppressed. After 24 hours the person may join
-again as a brand-new participant: on the next `configure(_:)` or foreground the
-SDK clears the old session and registers afresh.
-
-**Throws** `AvafliError.notConfigured` (no `configure(_:)` yet) or
-`AvafliError.authenticationRequired` (device not registered yet); network
-errors propagate as thrown.
-
-Users can also run the same erasure themselves from the in-app Privacy Policy
-(**Delete my data & stop participating**). There is no other erasure API.
+There is no host-callable erasure. `Avafli.optOut()` was removed from the
+public surface in 3.3.2 (a host app must not be able to erase a person's
+Avafli data). Users delete their own data from the Privacy Policy screen inside
+the experience (**Delete my data & stop participating**): identity-wide
+erasure, after which `present()` is refused with `.optedOut` and the auto-open
+is suppressed on that device for 24 hours, then the person may join again as a
+brand-new participant (the SDK clears the old session and registers afresh on
+the next `configure(_:)` or foreground). Nothing for the host app to do.
 
 ### Push notifications
 
@@ -128,7 +125,8 @@ public static func didRegisterForRemoteNotifications(deviceToken: Data)
 
 Forward from `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
 The APNs token is kept locally only; server-sent reminders need the FCM token
-below. Until one arrives the local reminder stays armed.
+below. Until one has been accepted by the backend the local reminder stays
+armed; once one has (even on an earlier launch) this call no longer arms it.
 
 ```swift
 public static func didReceiveFCMToken(_ token: String)
@@ -137,14 +135,18 @@ public static func didReceiveFCMToken(_ token: String)
 Forward from `MessagingDelegate.messaging(_:didReceiveRegistrationToken:)`.
 Sends the token to the Avafli backend (once per process, after the device is
 registered) so reminders can be delivered through your Firebase project. Empty
-tokens are ignored.
+tokens are ignored. **When the backend accepts the token the local 6 PM
+fallback reminder is cancelled** and a per-install flag is persisted so it is
+not re-armed on later launches (3.3.2) — server reminders are then the only
+reminders.
 
 ```swift
 public static func didFailToRegisterForRemoteNotifications(error: Error)
 ```
 
 Forward from `application(_:didFailToRegisterForRemoteNotificationsWithError:)`.
-Logs the error and schedules the local reminder.
+Logs the error, clears the persisted "server token" flag and schedules the
+local reminder.
 
 ---
 
@@ -301,8 +303,7 @@ public enum AvafliError: Error {
 Conforms to `LocalizedError`; every case has an `errorDescription`. The cases a
 host app can receive from `present(completion:)` are `.notConfigured`,
 `.serviceUnavailable`, `.optedOut`, `.giveawayNotActive` and
-`.noPresentingViewController`; `optOut()` throws `.notConfigured` and
-`.authenticationRequired`. The rest are used inside the experience, which
+`.noPresentingViewController`. The rest are used inside the experience, which
 renders its own messaging (for example a "Not available in your location" state
 for `.geoBlocked`).
 
@@ -321,8 +322,8 @@ public struct DailyEntryGrant {
 
 The entries granted by one day's claim: `baseEntries` from the giveaway's
 ladder for the streak day, `bonusEntries` from weekly/monthly/milestone
-bonuses. It is the payload of `present(completion:)`'s `.success` case, which
-the 3.3.0 experience does not deliver (see above).
+bonuses. It is the payload of `present(completion:)`'s `.success` case,
+delivered once when that presentation records today's entries (see above).
 
 ---
 
@@ -374,7 +375,7 @@ public enum AvafliAnalyticsEvent {
 }
 ```
 
-What the 3.3.0 experience actually sends to your adapter:
+What the 3.3.2 experience actually sends to your adapter:
 
 | Event | When | Properties |
 | --- | --- | --- |
@@ -387,7 +388,7 @@ What the 3.3.0 experience actually sends to your adapter:
 
 `avafli_registration`, `avafli_experience_closed`, `avafli_bonus_entry_claimed`
 and `avafli_prize_won` are defined as constants but are **not emitted** by the
-3.3.0 experience.
+3.3.2 experience.
 
 ---
 
@@ -412,10 +413,12 @@ Two members are only reachable here:
 - `scheduleLocalStreakReminder()` — (re)schedules the local fallback: a
   repeating daily notification at 6 PM device time, "Don't lose your streak!".
   The SDK calls it itself when permission is denied, when APNs registration
-  fails, and when an APNs token arrives before any FCM token was registered.
-- `cancelStreakReminders()` — removes that local reminder. The SDK never calls
-  it on its own; call it if your app sends its own reminders or after an FCM
-  token has been registered and you do not want a local nudge as well.
+  fails, and when an APNs token arrives. **A logged no-op while the backend
+  holds a push token for this install** (3.3.2): server reminders and the local
+  nudge are never both armed.
+- `cancelStreakReminders()` — removes that local reminder. The SDK calls it
+  itself the moment the backend accepts an FCM token (3.3.2); call it yourself
+  if your app sends its own reminders and you want no Avafli nudge at all.
 
 ---
 
@@ -423,7 +426,7 @@ Two members are only reachable here:
 
 ```swift
 public enum AvafliConstants {
-    public static let sdkVersion = "3.3.0"
+    public static let sdkVersion = "3.3.2"
     public static let platformOS = "iOS"
 }
 ```

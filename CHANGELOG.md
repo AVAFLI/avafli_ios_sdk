@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.3.2 — 2026-11-13
+
+### Removed
+- **`Avafli.optOut()` is no longer public** (now internal). **Breaking** for any host app that called it: remove the call — it will not compile. Product decision: a host app must not be able to erase a person's Avafli data. People delete their own data from the Privacy Policy screen inside the experience (**Delete my data & stop participating**, the legal webview's `avafli://delete` / `winr://delete` bridge), which still performs the same identity-wide erasure with the 24-hour rejoin and `optedOutUntil` handling. Nothing for the host app to do.
+
+### Fixed
+- **`present(completion:)` now delivers `.success(DailyEntryGrant)`.** Since the V2 auto-claim (3.0) the completion only ever received `.failure`: every claim ran through the auto-claim path, which never called back. It now fires once per presentation, on the main thread, the moment that presentation records today's entries — the auto-claim on open, the Day-1 claim after email submit, or a winner's silent claim behind the prize flow. Not called when nothing is claimed in that presentation (already claimed today, still on email capture, claim failed and queued for retry). `.failure` delivery is unchanged.
+- **The local 6 PM streak reminder is cancelled once the backend accepts a push token** and is not re-armed on that install (the flag persists across launches), so a person with working server reminders no longer also gets the local nudge. The local fallback still covers devices without a token, and returns if APNs registration fails or permission is revoked. `PushNotificationManager.scheduleLocalStreakReminder()` is a logged no-op while a server token is registered.
+
+### Docs
+- README §4 "What the user sees" carries the account-deletion note; the host-app "Account deletion" section, the `optOut()` recipe and the DocC topic are gone. `present(completion:)`, push-reminder and `PushNotificationManager` docs updated; version lines 3.3.2.
+
 ## 3.3.1 — 2026-11-13
 
 ### Fixed

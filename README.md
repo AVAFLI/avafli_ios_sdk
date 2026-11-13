@@ -5,7 +5,7 @@
 [![Platform](https://img.shields.io/badge/platform-iOS%2015.0%2B-blue.svg)](https://developer.apple.com/ios/)
 [![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange.svg)](https://swift.org)
 [![SPM](https://img.shields.io/badge/SPM-compatible-brightgreen.svg)](https://swift.org/package-manager/)
-[![CocoaPods](https://img.shields.io/badge/CocoaPods-3.3.1-red.svg)](https://cocoapods.org/pods/AvafliSDK)
+[![CocoaPods](https://img.shields.io/badge/CocoaPods-3.3.2-red.svg)](https://cocoapods.org/pods/AvafliSDK)
 
 Avafli adds a daily-entry sweepstakes to your app. A bottom drawer opens itself
 on the first app-open of each day, claims the user's entries automatically and
@@ -14,7 +14,7 @@ ladder, branding and reminder schedules are managed from the
 [Avafli dashboard](https://sdk.avafli.com/dashboard) and change without an app
 release.
 
-Current version: **3.3.1** (`AvafliConstants.sdkVersion`). Full history in
+Current version: **3.3.2** (`AvafliConstants.sdkVersion`). Full history in
 [CHANGELOG.md](CHANGELOG.md).
 
 ## Contents
@@ -25,9 +25,8 @@ Current version: **3.3.1** (`AvafliConstants.sdkVersion`). Full history in
 4. [What the user sees](#4-what-the-user-sees)
 5. [Controlling presentation](#5-controlling-presentation)
 6. [Push reminders](#6-push-reminders)
-7. [Account deletion](#7-account-deletion)
-8. [Testing checklist](#8-testing-checklist)
-9. [API reference](#9-api-reference)
+7. [Testing checklist](#7-testing-checklist)
+8. [API reference](#8-api-reference)
 10. [Links](#10-links)
 
 ---
@@ -55,13 +54,13 @@ The Swift module, SPM product and CocoaPods pod are all named **`AvafliSDK`**.
 
 Xcode: **File → Add Package Dependencies…**, enter
 `https://github.com/AVAFLI/avafli_ios_sdk.git`, choose **Up to Next Major
-Version** from `3.3.1`, and add the `AvafliSDK` library to your app target.
+Version** from `3.3.2`, and add the `AvafliSDK` library to your app target.
 
 Or in `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.3.1")
+    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.3.2")
 ],
 targets: [
     .target(name: "MyApp", dependencies: ["AvafliSDK"])
@@ -117,7 +116,7 @@ in you simply call `configure` again with the real user — the streak carries
 over.
 
 **Keys.** `avafli_live_…` is your real giveaway; `avafli_test_…` is an isolated
-sandbox that hits the same production backend (§8). Keys issued before the
+sandbox that hits the same production backend (§7). Keys issued before the
 Avafli rename (`winr_live_…` / `winr_test_…`) remain valid. Every key is
 server-side restricted to the bundle IDs you register in the dashboard — a
 mismatch surfaces as `AvafliError.unauthorizedBundleId` in the debug log.
@@ -172,10 +171,15 @@ Avafli LLC" line renders under the prize wherever it is shown. It is legally
 required and cannot be turned off. Exclusive giveaways show nothing extra.
 
 **Legal pages.** The Official Rules (per giveaway) and the Privacy Policy
-(`https://sdk.avafli.com/sdk/privacy`) open in an in-app web view. The Privacy
-Policy contains a **Delete my data & stop participating** section that performs
-the erasure described in §7. No URL-scheme registration or integration work is
-needed.
+(`https://sdk.avafli.com/sdk/privacy`) open in an in-app web view. No
+URL-scheme registration or integration work is needed.
+
+**Account deletion.** Users delete their Avafli data themselves from the
+Privacy Policy screen inside the experience (**Delete my data & stop
+participating**): an identity-wide erasure, after which the experience stays
+silent on that device for 24 hours and the person may then join again as a new
+participant. There is nothing for the host app to do, and no API for it — a
+host app cannot erase a person's Avafli data.
 
 **Branding.** Logo, prize image and primary color come from the dashboard and
 update instantly on every install. There is nothing to set in code.
@@ -212,7 +216,10 @@ Call it on the main thread.
 
 ```swift
 let accepted = Avafli.present { result in
-    if case .failure(let error) = result {
+    switch result {
+    case .success(let grant):
+        print("Avafli: +\(grant.total) entries today")   // base \(grant.baseEntries) + bonus \(grant.bonusEntries)
+    case .failure(let error):
         print("Avafli could not open: \(error.localizedDescription)")
     }
 }
@@ -227,13 +234,17 @@ let accepted = Avafli.present { result in
 - Returns `false` when refused right away; the completion then receives
   `.failure` with `.notConfigured`, `.optedOut`, `.serviceUnavailable`,
   `.giveawayNotActive` or `.noPresentingViewController`.
+- `.success(DailyEntryGrant)` arrives **once, on the main thread, the moment
+  that presentation records today's entries** — the drawer claims them
+  automatically on open (a winner's silent claim behind the prize flow counts
+  too). It is not called when nothing is claimed in that presentation: the day
+  was already claimed, the person is still on email capture, or the claim
+  failed and was queued for retry. The same moment is also reported as
+  `avafli_daily_entry_claimed` through your `AnalyticsAdapter` (§8), which
+  also covers the auto-open.
 - When the drawer closes it writes the same once-per-day mark the auto-open
   writes, so the auto-open will not pop a second time that day.
 - With a prize claim pending it opens on the winner splash.
-- **The `.success(DailyEntryGrant)` case is not delivered by the 3.3.0
-  experience.** Entries are claimed automatically inside the drawer; to observe
-  the claim, listen for `avafli_daily_entry_claimed` through your
-  `AnalyticsAdapter` (§9).
 
 ### `Avafli.holdAutoOpen()` / `Avafli.releaseAutoOpen()`
 
@@ -291,35 +302,15 @@ func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: Str
 
 Without an FCM token (apps that do not use Firebase Messaging, or permission
 denied) the SDK schedules a **local** daily reminder at 6 PM device time
-("Don't lose your streak!"). You can remove it with
+("Don't lose your streak!"). The moment the backend accepts an FCM token the
+SDK **cancels that local reminder and never re-arms it** on that install — a
+person with server reminders never also gets the local nudge. The fallback
+comes back only if APNs registration later fails or permission is revoked. You
+can remove the local reminder yourself at any time with
 `PushNotificationManager.shared.cancelStreakReminders()`. Set
 `enablePushReminders: false` to opt out of reminders entirely.
 
-## 7. Account deletion
-
-Users can delete their own data at any time from the Privacy Policy inside the
-drawer (**Delete my data & stop participating**) — no integration needed. If
-your app has its own delete-account flow, call `optOut()` from it so the
-person's Avafli data goes with their account:
-
-```swift
-// Call on your delete-account path. Throws .notConfigured or .authenticationRequired.
-try await Avafli.optOut()
-```
-
-What it does: an identity-wide erasure on the backend — PII anonymised across
-all of the person's devices, including prize-claim records; entries and streaks
-are forfeited and cannot be restored. De-identified entry records are retained
-as the legally required evidence that drawings were fair (GDPR Art. 17(3)).
-
-What happens next: for **24 hours** that email and that device cannot register
-(enforced server-side, so it holds across reinstalls), the experience stays
-silent and `present()` is refused with `.optedOut`. After 24 hours the person
-may join again as a brand-new participant with no connection to the old
-profile: on the next `configure(_:)` or app foreground the SDK clears the old
-session, registers afresh and shows the normal email-capture flow.
-
-## 8. Testing checklist
+## 7. Testing checklist
 
 **Sandbox key.** Your dashboard shows an `avafli_test_…` key next to your live
 key. Use it in debug builds and CI: same production backend, identical
@@ -357,7 +348,7 @@ The sample app in [`AvafliExample/`](AvafliExample/) is this integration
 end-to-end (it uses Avafli's own demo publisher key, restricted to the sample's
 bundle ID, so its demo buttons can reset state server-side).
 
-## 9. API reference
+## 8. API reference
 
 Everything a host app calls. Full signatures, every type and every error case
 are in [docs/API_REFERENCE.md](docs/API_REFERENCE.md); copy-paste recipes in
@@ -366,14 +357,13 @@ are in [docs/API_REFERENCE.md](docs/API_REFERENCE.md); copy-paste recipes in
 | Call | Purpose |
 | --- | --- |
 | `Avafli.configure(_ configuration: AvafliConfiguration)` | The integration. Registers the device, fetches the giveaway, arms the daily auto-open |
-| `Avafli.present(completion:) -> Bool` | Open the drawer yourself; bypasses the daily mark |
+| `Avafli.present(completion:) -> Bool` | Open the drawer yourself; bypasses the daily mark; `.success(grant)` when that presentation claims today's entries |
 | `Avafli.holdAutoOpen()` / `Avafli.releaseAutoOpen()` | Defer the auto-open around a boot flow |
-| `Avafli.optOut() async throws` | Identity-wide erasure; 24-hour rejoin |
 | `Avafli.registerForPushNotifications()` | Permission + APNs registration (no-op when reminders are disabled) |
 | `Avafli.didRegisterForRemoteNotifications(deviceToken:)` | Forward from `AppDelegate` |
 | `Avafli.didFailToRegisterForRemoteNotifications(error:)` | Forward from `AppDelegate` |
-| `Avafli.didReceiveFCMToken(_:)` | Forward from `MessagingDelegate` — required for server-sent reminders |
-| `PushNotificationManager.shared.cancelStreakReminders()` | Remove the local fallback reminder |
+| `Avafli.didReceiveFCMToken(_:)` | Forward from `MessagingDelegate` — required for server-sent reminders; cancels the local fallback once the backend accepts the token |
+| `PushNotificationManager.shared.cancelStreakReminders()` | Remove the local fallback reminder yourself |
 
 **Types:** `AvafliConfiguration`, `AvafliUser` (+ `.guest`), `AvafliOptions`,
 `AvafliAutoOpen`, `AvafliEnvironment` (`.production` only), `AvafliError`,
@@ -391,12 +381,12 @@ final class MyAnalyticsAdapter: AnalyticsAdapter {
 }
 ```
 
-Events the 3.3.0 experience emits: `avafli_experience_opened`,
+Events the 3.3.2 experience emits: `avafli_experience_opened`,
 `avafli_daily_entry_claimed`, `avafli_streak_milestone`, `avafli_badge_earned`,
 `avafli_winner_claim_shown`, `avafli_prize_claim_submitted`. The default
 adapter logs them to the Xcode console.
 
-## 10. Links
+## 9. Links
 
 - Dashboard: <https://sdk.avafli.com/dashboard>
 - iOS docs: <https://sdk.avafli.com/ios>

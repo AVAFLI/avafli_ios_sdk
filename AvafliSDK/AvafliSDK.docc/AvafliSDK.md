@@ -6,6 +6,8 @@ Drop-in daily-entry sweepstakes for iOS apps.
 
 Avafli adds a daily-entry sweepstakes to your app. A bottom drawer opens itself on the first app-open of each day, claims the user's entries automatically and celebrates the streak. You call ``Avafli/configure(_:)`` once; prizes, the entry ladder, branding and reminder schedules are managed from the Avafli dashboard and change without an app release.
 
+To open the drawer yourself, call ``Avafli/present(completion:)``; its completion receives `.success(grant)` once, the moment that presentation records today's entries, or `.failure` when presentation is refused. Users delete their own data from the Privacy Policy screen inside the experience — there is nothing for the host app to do, and no API for it.
+
 ```swift
 import AvafliSDK
 
@@ -16,7 +18,7 @@ Avafli.configure(AvafliConfiguration(
 ))
 ```
 
-Requirements: iOS 15.0+, Xcode 15.0+, Swift 5.9+. Install with Swift Package Manager (`https://github.com/AVAFLI/avafli_ios_sdk.git`, from 3.3.0) or CocoaPods (`pod 'AvafliSDK', '~> 3.3'`).
+Requirements: iOS 15.0+, Xcode 15.0+, Swift 5.9+. Install with Swift Package Manager (`https://github.com/AVAFLI/avafli_ios_sdk.git`, from 3.3.2) or CocoaPods (`pod 'AvafliSDK', '~> 3.3'`).
 
 ## Topics
 
@@ -42,10 +44,6 @@ Requirements: iOS 15.0+, Xcode 15.0+, Swift 5.9+. Install with Swift Package Man
 - ``Avafli/didReceiveFCMToken(_:)``
 - ``Avafli/didFailToRegisterForRemoteNotifications(error:)``
 - ``PushNotificationManager``
-
-### Account deletion
-
-- ``Avafli/optOut()``
 
 ### Analytics
 

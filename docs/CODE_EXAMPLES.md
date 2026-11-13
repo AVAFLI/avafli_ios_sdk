@@ -1,6 +1,6 @@
 # Avafli iOS SDK — Code Examples
 
-Copy-paste recipes that compile against 3.3.0. See the [README](../README.md)
+Copy-paste recipes that compile against 3.3.2. See the [README](../README.md)
 for the walkthrough and [API_REFERENCE.md](API_REFERENCE.md) for signatures.
 
 ## 1. Minimal integration (UIKit lifecycle)
@@ -86,7 +86,12 @@ Avafli.configure(AvafliConfiguration(
 // Onboarding-complete handler (main thread)
 func onboardingDidComplete() {
     let accepted = Avafli.present { result in
-        if case .failure(let error) = result {
+        switch result {
+        case .success(let grant):
+            // Delivered once, on the main thread, the moment this presentation
+            // recorded today's entries (the drawer claims automatically on open).
+            print("Avafli: +\(grant.total) entries (base \(grant.baseEntries), bonus \(grant.bonusEntries))")
+        case .failure(let error):
             print("Avafli could not open: \(error.localizedDescription)")
         }
     }
@@ -96,8 +101,9 @@ func onboardingDidComplete() {
 
 `present()` bypasses the once-per-day mark and the impression cap, waits for
 registration if it is still in flight, and is a no-op if the drawer is already
-open. The `.success` case is not delivered in 3.3.0 — see example 6 for how to
-observe the claim.
+open. `.success` is not called when that presentation claims nothing (already
+claimed today, still on email capture, claim queued for retry); the auto-open
+has no completion — example 6 shows the analytics event that covers both.
 
 ## 5. Hold the auto-open through a boot flow
 
@@ -138,7 +144,7 @@ Avafli.configure(AvafliConfiguration(
 ))
 ```
 
-Events emitted in 3.3.0: `avafli_experience_opened`, `avafli_daily_entry_claimed`,
+Events emitted in 3.3.2: `avafli_experience_opened`, `avafli_daily_entry_claimed`,
 `avafli_streak_milestone`, `avafli_badge_earned`, `avafli_winner_claim_shown`,
 `avafli_prize_claim_submitted` ([details](API_REFERENCE.md#avaflianalyticsevent)).
 Pass `analyticsAdapter: nil` to receive nothing.
@@ -182,7 +188,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
 
 Upload a service-account key from the same Firebase project in the dashboard;
 reminders are sent through your project. Without an FCM token the SDK falls
-back to a local 6 PM reminder, which you can remove with
+back to a local 6 PM reminder; once the backend accepts the FCM token that
+local reminder is cancelled automatically and not re-armed on that install.
+You can also remove it yourself with
 `PushNotificationManager.shared.cancelStreakReminders()`.
 
 ## 8. Turn reminders off
@@ -191,27 +199,12 @@ back to a local 6 PM reminder, which you can remove with
 AvafliOptions(enablePushReminders: false)   // registerForPushNotifications() becomes a no-op
 ```
 
-## 9. Account deletion from your own flow
+## 9. Account deletion
 
-```swift
-func deleteAccountTapped() {
-    Task {
-        do {
-            try await Avafli.optOut()
-            // Avafli data erased identity-wide; this device is silent for 24 hours,
-            // after which the person may join again as a new participant.
-        } catch AvafliError.notConfigured, AvafliError.authenticationRequired {
-            // Nothing registered with Avafli yet — nothing to erase.
-        } catch {
-            print("Avafli opt-out failed: \(error)")   // network — retry later
-        }
-        // …then delete the account in your own backend
-    }
-}
-```
-
-Users can also do this themselves from the in-app Privacy Policy
-(**Delete my data & stop participating**).
+There is nothing to integrate and no API: users delete their own Avafli data
+from the Privacy Policy screen inside the experience (**Delete my data & stop
+participating**). A host app cannot erase a person's Avafli data (`optOut()`
+left the public surface in 3.3.2).
 
 ## 10. Handle `present()` refusals
 

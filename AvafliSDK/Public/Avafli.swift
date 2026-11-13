@@ -155,6 +155,14 @@ public enum Avafli {
     /// `registerDevice`); if registration failed, `completion` receives
     /// `.giveawayNotActive` — nothing is ever thrown to the host.
     ///
+    /// `completion` receives `.success(grant)` once, on the main thread, the
+    /// moment this presentation records today's entries (the drawer claims
+    /// them automatically on open; a winner's silent claim behind the prize
+    /// flow counts too). It is not called when nothing is claimed — the day
+    /// was already claimed, the person is still on email capture, or the
+    /// claim failed and was queued for retry. `.failure` is delivered when
+    /// presentation is refused (see Returns).
+    ///
     /// - Returns: `false` when presentation was refused right away (not
     ///   configured, opted out, suspended, no giveaway, no presenting view
     ///   controller); `true` when it was presented, deferred until
@@ -587,9 +595,14 @@ public enum Avafli {
     /// PII anonymized, entries and streaks forfeited) and silences the experience
     /// on this device. For 24 hours that email and this device cannot register;
     /// after that the person may join again as a brand-new participant with no
-    /// connection to the old profile. Wire this to the opt-out action in your
-    /// privacy-policy flow.
-    public static func optOut() async throws {
+    /// connection to the old profile.
+    ///
+    /// Internal since 3.3.2 (was public). Only the person can erase their own
+    /// data: the Privacy Policy screen inside the experience raises the
+    /// confirmation through the legal webview's `avafli://delete` /
+    /// `winr://delete` bridge (`AvafliV2OptOutCoordinator`). A host app is
+    /// deliberately not given a way to erase someone's Avafli participation.
+    static func optOut() async throws {
         guard let configuration = configuration else { throw AvafliError.notConfigured }
         let keychain = KeychainStorage()
         guard keychain.loadToken() != nil else { throw AvafliError.authenticationRequired }
@@ -1347,10 +1360,12 @@ public enum Avafli {
     // the same day farmed unlimited entries. It also destroyed the records proving the
     // drawing was fair, and left prize-claim PII orphaned.
     //
-    // Use `optOut()` instead. It is the correct erasure: identity-wide, PII scrubbed
+    // The erasure is `optOut()` (internal since 3.3.2): identity-wide, PII scrubbed
     // everywhere including prize claims, and tombstoned so the same email and
     // device cannot register again for 24 hours (it survives a reinstall). After
-    // that the person may join again as a brand-new participant (3.2.0).
+    // that the person may join again as a brand-new participant (3.2.0). It is
+    // reached only from the in-experience "Delete my data & stop participating"
+    // confirmation — a host app cannot erase a person's Avafli data.
 
     // MARK: - Push Notifications
 
@@ -1379,7 +1394,9 @@ public enum Avafli {
 
     /// Forward the Firebase Messaging registration token so Avafli's backend can
     /// send streak reminders through your Firebase project. Call from
-    /// `MessagingDelegate.messaging(_:didReceiveRegistrationToken:)`.
+    /// `MessagingDelegate.messaging(_:didReceiveRegistrationToken:)`. Once the
+    /// backend accepts the token the local 6 PM fallback reminder is cancelled
+    /// and not re-armed (3.3.2) — the person gets server reminders only.
     public static func didReceiveFCMToken(_ token: String) {
         PushNotificationManager.shared.didReceiveFCMToken(token)
     }

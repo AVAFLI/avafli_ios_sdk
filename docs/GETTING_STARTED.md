@@ -19,10 +19,10 @@ Module, SPM product and pod are all named `AvafliSDK`.
 
 **Swift Package Manager** — Xcode: *File → Add Package Dependencies…* →
 `https://github.com/AVAFLI/avafli_ios_sdk.git` → *Up to Next Major Version*
-from `3.3.1` → add `AvafliSDK` to your app target. Or:
+from `3.3.2` → add `AvafliSDK` to your app target. Or:
 
 ```swift
-.package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.3.1")
+.package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.3.2")
 ```
 
 **CocoaPods**
@@ -111,7 +111,10 @@ Avafli.configure(AvafliConfiguration(
 
 // Later — e.g. from your onboarding-complete handler (main thread)
 let accepted = Avafli.present { result in
-    if case .failure(let error) = result { print("Avafli: \(error.localizedDescription)") }
+    switch result {
+    case .success(let grant): print("Avafli: +\(grant.total) entries today")
+    case .failure(let error): print("Avafli: \(error.localizedDescription)")
+    }
 }
 ```
 
@@ -119,9 +122,11 @@ let accepted = Avafli.present { result in
 registration if it is still in flight, and returns `false` (with a `.failure`
 completion) when there is nothing to show: not configured, opted out,
 suspended, no active giveaway and no pending claim, or no presenting view
-controller. In 3.3.0 the `.success` case is not delivered — entries are claimed
-inside the drawer; observe `avafli_daily_entry_claimed` through your analytics
-adapter if you need the moment.
+controller. `.success(grant)` arrives once, on the main thread, the moment that
+presentation records today's entries (the drawer claims automatically); it is
+not called when nothing is claimed in that presentation. The auto-open has no
+completion — `avafli_daily_entry_claimed` through your analytics adapter
+covers both.
 
 The dashboard can set a server-side mode too; the most restrictive wins, and
 its `autoOpenEnabled` kill switch beats everything. A winner with a pending
@@ -153,22 +158,18 @@ func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: Str
 ```
 
 Without an FCM token (or with permission denied) the SDK schedules a local
-daily reminder at 6 PM device time instead. `enablePushReminders: false` turns
-reminders off entirely.
+daily reminder at 6 PM device time instead; once the backend accepts the FCM
+token that local reminder is cancelled and not re-armed on that install.
+`enablePushReminders: false` turns reminders off entirely.
 
 ## 7. Account deletion
 
-Users can delete their data themselves from the in-app Privacy Policy. If your
-app has its own delete-account flow, add:
-
-```swift
-try await Avafli.optOut()   // throws .notConfigured / .authenticationRequired
-```
-
-The erasure is identity-wide (all devices, including prize-claim records);
-entries and streaks are forfeited. For 24 hours that email and device cannot
-register and `present()` is refused with `.optedOut`; afterwards the person may
-join again as a brand-new participant and the SDK handles that on its own.
+Users delete their data themselves from the Privacy Policy screen inside the
+experience (**Delete my data & stop participating**). The erasure is
+identity-wide; for 24 hours `present()` is refused with `.optedOut`, then the
+person may join again as a brand-new participant and the SDK handles that on
+its own. There is nothing for your app to do and no API for it — a host app
+cannot erase a person's Avafli data.
 
 ## 8. Testing checklist
 
