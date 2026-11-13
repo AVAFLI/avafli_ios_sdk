@@ -2,8 +2,8 @@
 //  AppDelegate.swift
 //  AvafliExample
 //
-//  Demonstrates how to configure the Avafli SDK in your iOS app.
-//  Copy this pattern into your own AppDelegate or App init.
+//  The Avafli integration, end to end. Copy this pattern into your own
+//  AppDelegate (or your SwiftUI App's init()).
 //
 
 import UIKit
@@ -17,43 +17,39 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
 
-        // ┌──────────────────────────────────────────────────┐
-        // │  STEP 1: Configure the SDK with user identity    │
-        // │                                                  │
-        // │  Replace apiKey with the key from your           │
-        // │  publisher dashboard at:                         │
-        // │  https://sdk.avafli.com/dashboard                │
-        // │                                                  │
-        // │  environment is production-only.                 │
-        // │                                                  │
-        // │  Branding is configured server-side:             │
-        // │  - Starter plan: white-label set by Avafli team  │
-        // │  - Growth/Enterprise: customizable via dashboard │
-        // │  No branding config is needed in code.           │
-        // │                                                  │
-        // │  Pass an AvafliUser with your app's user ID,     │
-        // │  first name, and last name. You do NOT need to   │
-        // │  pass email — the SDK collects it via the email  │
-        // │  capture screen when the user first enters the   │
-        // │  Avafli experience.                              │
-        // └──────────────────────────────────────────────────┘
+        // ┌──────────────────────────────────────────────────────────────┐
+        // │  Avafli.configure(_:) is the whole integration.              │
+        // │                                                              │
+        // │  apiKey   — from https://sdk.avafli.com/dashboard. Use your  │
+        // │             avafli_test_ sandbox key in debug builds and     │
+        // │             your avafli_live_ key in release builds.         │
+        // │  bundleId — must be registered to that key in the dashboard. │
+        // │  user     — your app's stable user id; name and email are    │
+        // │             optional (the SDK captures the email through its │
+        // │             own consent screen; a winner is asked for their  │
+        // │             name at prize claim). Nobody signed in? .guest   │
+        // │                                                              │
+        // │  Branding (logo, prize image, primary color), the entry      │
+        // │  ladder and reminder schedules are set in the dashboard —    │
+        // │  nothing to configure in code.                               │
+        // └──────────────────────────────────────────────────────────────┘
 
-        // In a real app, use YOUR authenticated user's ID here.
-        // For this example, we generate a stable ID per device install.
-        let userId = UserDefaults.standard.string(forKey: "winr_example_user_id") ?? {
+        // In a real app, use YOUR authenticated user's id here. This sample
+        // keeps a stable id per install so relaunches are the same user.
+        let userId = UserDefaults.standard.string(forKey: "avafli_example_user_id") ?? {
             let id = UUID().uuidString
-            UserDefaults.standard.set(id, forKey: "winr_example_user_id")
+            UserDefaults.standard.set(id, forKey: "avafli_example_user_id")
             return id
         }()
 
-        // The key below is the shared DEMO key: it belongs to the "Avafli Test Account"
-        // publisher and is server-side restricted to the example apps' bundle IDs, so
-        // it is safe to ship in this sample. In YOUR app, load your real key from a
-        // non-committed source (e.g. an .xcconfig build setting surfaced via
-        // Info.plist, or your secrets manager) — never commit a live production key.
+        // This sample deliberately uses Avafli's own DEMO publisher key instead
+        // of a sandbox key: it is server-side restricted to the sample's bundle
+        // id, and the demo buttons on the main screen (reset claim, make me the
+        // winner, …) only work against that publisher. In YOUR app, load your
+        // key from a non-committed source (an .xcconfig build setting surfaced
+        // via Info.plist, or your secrets manager) — never commit a live key.
         let config = AvafliConfiguration(
             apiKey: "winr_live_50b1b3b801a843d5e1f99593fcad4d14",
-            environment: .production,
             bundleId: Bundle.main.bundleIdentifier ?? "com.avafli.winr.example",
             user: AvafliUser(
                 id: userId,
@@ -61,29 +57,37 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                 lastName: "User"
             ),
             options: AvafliOptions(
-                logging: .debug,                                  // Use .error in production
-            )
+                logging: .debug          // use .error in release builds
+            ),
+            autoOpen: .always            // default; .returningUsersOnly / .never to control timing yourself
         )
 
         Avafli.configure(config)
 
+        // Streak reminders: also call Avafli.registerForPushNotifications()
+        // after configure (it asks for notification permission, so this sample
+        // leaves it out) and upload a Firebase service-account key in the
+        // dashboard. Forward your FCM token from MessagingDelegate:
+        //   Avafli.didReceiveFCMToken(fcmToken)
+
         return true
     }
 
-    // MARK: - Push Notifications (Optional)
-    //
-    // Uncomment these to enable Avafli streak reminders via APNs.
-    // Also call Avafli.registerForPushNotifications() after configure.
+    // MARK: - Push notifications — forward the APNs callbacks
 
-    // func application(_ application: UIApplication,
-    //                  didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-    //     Avafli.didRegisterForRemoteNotifications(deviceToken: deviceToken)
-    // }
-    //
-    // func application(_ application: UIApplication,
-    //                  didFailToRegisterForRemoteNotificationsWithError error: Error) {
-    //     Avafli.didFailToRegisterForRemoteNotifications(error: error)
-    // }
+    func application(
+        _ application: UIApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        Avafli.didRegisterForRemoteNotifications(deviceToken: deviceToken)
+    }
+
+    func application(
+        _ application: UIApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+        Avafli.didFailToRegisterForRemoteNotifications(error: error)
+    }
 
     // MARK: - Scene Configuration
 

@@ -446,7 +446,7 @@ struct AvafliV2WinnerSplashView: View {
                             .lineLimit(2)
                             .minimumScaleFactor(0.6)
                             .multilineTextAlignment(.center)
-                        // 3.3.0: network giveaway sponsor line, directly under
+                        // 3.3.0: shared giveaway sponsor line, directly under
                         // the prize — same treatment as the Day-1 capture strip
                         // (muted gunmetal on white). Absent → nothing mounts.
                         if let sponsorDisclosure {

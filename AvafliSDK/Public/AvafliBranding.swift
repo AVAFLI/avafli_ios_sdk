@@ -70,7 +70,7 @@ public struct AvafliBranding {
         logo: AvafliLogo,
         logoTwo: AvafliLogo? = nil,
         primaryLogoSize: CGSize,
-        secondaryLogoSize: CGSize,
+        secondaryLogoSize: CGSize
     ) {
         self.primaryColor = primaryColor
         self.secondaryTextColor = secondaryTextColor

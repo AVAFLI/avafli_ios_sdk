@@ -101,7 +101,7 @@ struct AvafliV2PrizeCard: View {
     let prizeValue: Int
     let prizeDescription: String
     var visitMode = false
-    /// 3.3.0 — network giveaway sponsor line ("Sponsored by Avafli LLC"),
+    /// 3.3.0 — shared giveaway sponsor line ("Sponsored by Avafli LLC"),
     /// drawn as one muted line directly under the prize headline. Nil (every
     /// exclusive giveaway) draws nothing and leaves the card pixel-identical.
     var sponsorDisclosure: String? = nil
@@ -192,7 +192,7 @@ struct AvafliV2PrizeCard: View {
 
     /// Prize headline over the bottom scrim. The outer VStack has exactly one
     /// child for an exclusive giveaway (so no spacing is ever applied and the
-    /// lockup is unchanged); a network giveaway appends the sponsor line.
+    /// lockup is unchanged); a shared giveaway appends the sponsor line.
     private var headline: some View {
         VStack(alignment: isCashPrize ? .trailing : .center, spacing: 4) {
             if isCashPrize {
@@ -251,9 +251,9 @@ struct AvafliV2PrizeCard: View {
     }
 }
 
-// MARK: - Sponsor disclosure (network giveaway)
+// MARK: - Sponsor disclosure (shared giveaway)
 
-/// 3.3.0 — The one treatment for the network-giveaway sponsor line
+/// 3.3.0 — The one treatment for the shared-giveaway sponsor line
 /// ("Sponsored by Avafli LLC"): 12pt Inter medium, muted, single line, drawn
 /// directly beneath the prize wherever it is presented (dashboard prize card,
 /// Day-1 capture strip). Callers render it ONLY when the giveaway carries a

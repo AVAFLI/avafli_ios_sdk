@@ -1,14 +1,22 @@
 # Changelog
 
+## 3.3.1 — 2026-11-13
+
+### Fixed
+- Compiles on Xcode 15 / Swift 5.9 again: a trailing comma in `AvafliBranding.init` (Swift 6.1-only syntax) broke consumers building from source via SPM or CocoaPods.
+
+### Docs
+- README, Getting Started, API Reference and Code Examples re-verified against the public API: complete configure example with `#if DEBUG` sandbox/live keys, `present(completion:)`'s real semantics, the events actually emitted, `optOut()`'s 24-hour rejoin, claim window default (3 days, 1–60 per giveaway), testing checklist; DocC landing page.
+
 
 ## 3.3.0 — 2026-11-08
 
 ### Added
 
-- **Network giveaway sponsor disclosure.** The giveaway payload (the
+- **Shared giveaway sponsor disclosure.** The giveaway payload (the
   `giveaway` field of `registerDevice` and `getActiveGiveaway`) may carry
   `scope: "network"` and `sponsorDisclosure` (e.g. "Sponsored by Avafli LLC")
-  when the SDK is serving the shared network giveaway. The SDK shows the
+  when the SDK is serving the shared giveaway. The SDK shows the
   sponsor line as one small muted line directly under the prize wherever the
   prize is presented: the dashboard prize card (`AvafliV2PrizeCard`, which is
   also what auto-open / `present()` show) and the Day-1 email-capture prize

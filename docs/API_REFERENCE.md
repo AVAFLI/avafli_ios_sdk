@@ -1,29 +1,30 @@
-# Avafli SDK — API Reference
+# Avafli iOS SDK — API Reference (3.3.0)
 
-The [README](../README.md) is the canonical overview of the SDK; this page documents every public symbol as of 3.3.0.
+Every `public` symbol exported by the `AvafliSDK` module, taken from the source.
+Symbols are grouped by whether a host app is expected to call them.
 
-## Table of Contents
-
-- [Avafli (Static API)](#avafli-static-api)
+- [Avafli](#avafli) — the static entry point
 - [AvafliConfiguration](#avafliconfiguration)
 - [AvafliAutoOpen](#avafliautoopen)
-- [AvafliOptions](#avaflioptions)
 - [AvafliUser](#avafliuser)
+- [AvafliOptions](#avaflioptions)
+- [AvafliEnvironment](#avaflienvironment)
 - [AvafliError](#avaflierror)
 - [DailyEntryGrant](#dailyentrygrant)
-- [AnalyticsAdapter](#analyticsadapter)
-- [AvafliAnalyticsEvent](#avaflianalyticsevent)
+- [AnalyticsAdapter](#analyticsadapter), [ConsoleAnalyticsAdapter](#consoleanalyticsadapter), [AvafliAnalyticsEvent](#avaflianalyticsevent)
+- [PushNotificationManager](#pushnotificationmanager)
 - [AvafliConstants](#avafliconstants)
+- [Public but not for host use](#public-but-not-for-host-use) — `AvafliBranding`, `AvafliLogo`, `Color(hex:)`, demo hooks
 
 ---
 
-## Avafli (Static API)
+## Avafli
 
 ```swift
 public enum Avafli
 ```
 
-The primary entry point for the SDK. All methods are static.
+All members are static. Call UI-affecting members on the main thread.
 
 ### `configure(_:)`
 
@@ -31,9 +32,16 @@ The primary entry point for the SDK. All methods are static.
 public static func configure(_ configuration: AvafliConfiguration)
 ```
 
-The single entry point — call once at app launch. Stores the configuration, sets the logging level, registers the device in the background, and fetches the active giveaway. After registration completes (and on each app foreground), the SDK presents the experience automatically at most once per calendar day, subject to `AvafliConfiguration.autoOpen` (default `.always`). Auto-open can be disabled remotely via the dashboard; unregistered users see at most 3 auto-opens; opted-out users never see it. Device registration and analytics (DAU/MAU) run on configure regardless of the auto-open mode.
+The single entry point — call once at launch. Stores the configuration, sets
+the log level, registers the device in the background (or refreshes the
+session and the active giveaway for a returning device), submits the user
+profile, and from then on runs the once-per-day auto-open check after
+registration and on every return to the foreground. Calling it again (for
+example after sign-in, with a real `AvafliUser` instead of `.guest`) is
+supported: the streak and session are kept and attribution is updated.
 
----
+A network failure at boot is retried automatically on the next foreground and
+on connectivity regain. Nothing is thrown.
 
 ### `present(completion:)`
 
@@ -44,13 +52,29 @@ public static func present(
 ) -> Bool
 ```
 
-Publisher-initiated open: presents the experience modally from the top-most view controller — from a button, a screen, or an onboarding-complete handler. Explicit invocation bypasses the once-per-day mark and the unregistered impression cap, and does not count as an impression; on close it writes the same once-per-day mark auto-open writes, so a later auto-open that day does not double-pop.
+Publisher-initiated open from the top-most view controller of the
+foreground-active scene.
 
-Guards match auto-open: the SDK must be configured, the user must not have opted out, the publisher must not be suspended, an active giveaway must exist, and the experience must not already be on screen (no-op). If device registration is still in flight, `present()` waits for it; if registration failed, it returns without presenting and logs.
+Guards (same as the auto-open): configured; user not opted out; publisher not
+suspended; an active giveaway exists **or** a prize claim is pending; the
+experience is not already on screen (then a no-op that returns `true`). Unlike
+the auto-open it bypasses the once-per-day mark and the unregistered impression
+cap and never counts an impression. When the drawer closes it writes the
+once-per-day mark so the auto-open does not open again that day. With a pending
+prize claim it opens on the winner splash.
 
-**Returns:** `false` if the SDK is not configured or no presenting view controller could be found; `true` once presentation begins. The completion receives the `DailyEntryGrant` when today's entry is claimed, or an `AvafliError` otherwise.
+If registration is still in flight the call returns `true` and the experience
+is presented once registration settles; if registration failed the completion
+receives `.failure(.giveawayNotActive)`.
 
----
+**Returns** `false` when refused immediately. The completion then receives
+`.failure` with one of `.notConfigured`, `.serviceUnavailable`, `.optedOut`,
+`.giveawayNotActive`, `.noPresentingViewController`.
+
+**`.success(DailyEntryGrant)` is not delivered by the 3.3.0 experience.** The
+drawer claims the day's entries automatically on open and that path does not
+call back; observe `avafli_daily_entry_claimed` through your `AnalyticsAdapter`
+instead.
 
 ### `holdAutoOpen()` / `releaseAutoOpen()`
 
@@ -59,9 +83,12 @@ public static func holdAutoOpen()
 public static func releaseAutoOpen()
 ```
 
-Defer the once-per-day auto-open around a boot flow. `holdAutoOpen()` may be called before `configure(_:)`; while held, the auto-open is deferred and nothing is burned (no once-per-day mark, no impression). `present(completion:)` still works while held. `releaseAutoOpen()` clears the hold and immediately re-runs the auto-open eligibility check (which applies the effective `autoOpen` mode). Both are safe before configure and idempotent.
-
----
+`holdAutoOpen()` pauses the once-a-day auto-open; call it before
+`configure(_:)` when a boot flow must not be covered. While held nothing is
+burned (no daily mark, no impression) and `present()` still works. A hold is
+deliberately not cleared by `configure(_:)`. `releaseAutoOpen()` clears the
+hold and immediately re-runs the eligibility check (applying the effective
+auto-open mode). Both are safe before `configure(_:)` and idempotent.
 
 ### `optOut()`
 
@@ -69,42 +96,55 @@ Defer the once-per-day auto-open around a boot flow. `holdAutoOpen()` may be cal
 public static func optOut() async throws
 ```
 
-Right-to-Delete opt-out: tombstones the person on the backend (identity-wide, PII anonymized, email suppressed) and permanently silences the experience on this device. If your app has its own delete-account flow, call this from it so the user's Avafli data is erased along with their account. Users can also delete their data themselves at any time from the Privacy Policy screen inside the experience — no integration required.
+Right-to-delete. Erases the person on the backend — identity-wide across all
+their devices, PII anonymised including prize-claim records, entries and
+streaks forfeited — and silences the experience on this device. For 24 hours
+that email and this device cannot register (the backend returns the exact
+moment the block lifts; the SDK persists it); `present()` is refused with
+`.optedOut` and the auto-open is suppressed. After 24 hours the person may join
+again as a brand-new participant: on the next `configure(_:)` or foreground the
+SDK clears the old session and registers afresh.
 
-**Throws:** `AvafliError.notConfigured`, `AvafliError.authenticationRequired`.
+**Throws** `AvafliError.notConfigured` (no `configure(_:)` yet) or
+`AvafliError.authenticationRequired` (device not registered yet); network
+errors propagate as thrown.
 
-`optOut()` is the only erasure API — there is no hard-delete method. Users can
-also invoke it themselves in-app: the Privacy Policy (every legal link opens it
-in an in-app webview) contains a **Delete my data & stop participating** section
-that confirms and runs the same opt-out.
+Users can also run the same erasure themselves from the in-app Privacy Policy
+(**Delete my data & stop participating**). There is no other erasure API.
 
----
-
-### Push Notifications
+### Push notifications
 
 ```swift
 public static func registerForPushNotifications()
 ```
 
-Requests notification permission and registers for APNs. No-op if `AvafliOptions.enablePushReminders` is `false`.
+Requests notification permission (`.alert, .sound, .badge`) and registers for
+remote notifications. No-op when `AvafliOptions.enablePushReminders` is
+`false`. If permission is denied, a local daily reminder is scheduled instead.
 
 ```swift
 public static func didRegisterForRemoteNotifications(deviceToken: Data)
 ```
 
-Forward the APNs token from `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
+Forward from `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
+The APNs token is kept locally only; server-sent reminders need the FCM token
+below. Until one arrives the local reminder stays armed.
 
 ```swift
 public static func didReceiveFCMToken(_ token: String)
 ```
 
-Forward the Firebase Messaging registration token from `MessagingDelegate.messaging(_:didReceiveRegistrationToken:)` so Avafli's backend can send streak reminders through your Firebase project. Without it the SDK falls back to local reminders.
+Forward from `MessagingDelegate.messaging(_:didReceiveRegistrationToken:)`.
+Sends the token to the Avafli backend (once per process, after the device is
+registered) so reminders can be delivered through your Firebase project. Empty
+tokens are ignored.
 
 ```swift
 public static func didFailToRegisterForRemoteNotifications(error: Error)
 ```
 
-Forward the APNs failure from `application(_:didFailToRegisterForRemoteNotificationsWithError:)`.
+Forward from `application(_:didFailToRegisterForRemoteNotificationsWithError:)`.
+Logs the error and schedules the local reminder.
 
 ---
 
@@ -112,8 +152,16 @@ Forward the APNs failure from `application(_:didFailToRegisterForRemoteNotificat
 
 ```swift
 public struct AvafliConfiguration {
+    public let apiKey: String
+    public let environment: AvafliEnvironment
+    public let bundleId: String
+    public let user: AvafliUser
+    public let options: AvafliOptions
+    public let autoOpen: AvafliAutoOpen
+
     public init(
         apiKey: String,
+        environment: AvafliEnvironment = .production,
         bundleId: String,
         user: AvafliUser,
         options: AvafliOptions = .init(),
@@ -122,15 +170,14 @@ public struct AvafliConfiguration {
 }
 ```
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `apiKey` | `String` | ✅ | Your Avafli API key from the dashboard |
-| `bundleId` | `String` | ✅ | App bundle ID (e.g. `com.example.myapp`) |
-| `user` | `AvafliUser` | ✅ | The authenticated user |
-| `options` | `AvafliOptions` | — | Optional behavior toggles |
-| `autoOpen` | `AvafliAutoOpen` | — | When the SDK auto-opens the experience (default `.always`) |
-
-Existing initializers stay source-compatible — `autoOpen` is optional and defaults to today's behavior.
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `apiKey` | yes | `avafli_live_…` (release) or `avafli_test_…` (sandbox, for debug builds). Keys issued before the rename (`winr_…`) remain valid |
+| `environment` | — | `.production` is the only value |
+| `bundleId` | yes | Must be one of the bundle IDs registered to the key in the dashboard |
+| `user` | yes | See `AvafliUser`; `.guest` when nobody is signed in |
+| `options` | — | Logging, analytics adapter, push reminders |
+| `autoOpen` | — | When the SDK may open the drawer by itself; default `.always` |
 
 ---
 
@@ -144,33 +191,18 @@ public enum AvafliAutoOpen {
 }
 ```
 
-| Case | Behavior |
-|------|----------|
-| `.always` | Default. Auto-opens once per calendar day when eligible — unchanged from previous releases. |
-| `.returningUsersOnly` | Skips the auto-open for the session in which the device is registered for the first time (`isNewUser`), so a first-time user's onboarding is not interrupted. Every later launch auto-opens as normal. An older backend that does not report `isNewUser` is treated as returning. |
-| `.never` | The SDK never auto-opens; the host calls `Avafli.present(completion:)`. |
+| Case | Behaviour |
+| --- | --- |
+| `.always` | Default. Auto-open once per local calendar day when eligible |
+| `.returningUsersOnly` | Skip the auto-open for the one session in which the backend reports this device as a brand-new user (`isNewUser`). Every later launch auto-opens. A backend that does not report `isNewUser` is treated as returning |
+| `.never` | Never auto-open; the host calls `present()` |
 
-The dashboard can also set a server-side mode (`experience.autoOpenMode`), and `experience.autoOpenEnabled == false` remains the hard kill switch. The effective mode is the most restrictive of the server settings and this value (`never` > `returningUsersOnly` > `always`). Registration and analytics run on `configure(_:)` in every mode.
-
----
-
-## AvafliOptions
-
-```swift
-public struct AvafliOptions {
-    public init(
-        logging: LoggingLevel = .error,
-        analyticsAdapter: AnalyticsAdapter? = ConsoleAnalyticsAdapter(),
-        enablePushReminders: Bool = true
-    )
-}
-```
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `logging` | `LoggingLevel` | `.error` | `.none`, `.error`, `.info`, or `.debug` |
-| `analyticsAdapter` | `AnalyticsAdapter?` | `ConsoleAnalyticsAdapter()` | Routes SDK events to your analytics stack |
-| `enablePushReminders` | `Bool` | `true` | Enables streak reminder push notifications |
+The effective mode is the most restrictive of the dashboard's server-side mode
+(`experience.autoOpenMode`), the server kill switch
+(`experience.autoOpenEnabled == false` → `never`) and this value
+(`never` > `returningUsersOnly` > `always`). Registration and analytics run in
+every mode. A pending prize claim reopens the drawer in every mode except
+`never` (see README §5).
 
 ---
 
@@ -178,6 +210,12 @@ public struct AvafliOptions {
 
 ```swift
 public struct AvafliUser {
+    public let id: String
+    public let firstName: String
+    public let lastName: String
+    public var phone: String?
+    public var email: String?
+
     public init(
         id: String,
         firstName: String = "",
@@ -186,28 +224,56 @@ public struct AvafliUser {
         email: String? = nil
     )
 
-    /// A guest session — the person is not signed in to your app (or your app
-    /// has no accounts). The SDK mints a stable per-install `avafli_guest_…` id.
     public static let guest: AvafliUser
 }
 ```
 
-Only `id` is required; everything else is optional and the SDK captures what's
-missing (email via its capture screen, name at prize-claim if the user wins).
-Pass whatever identity you already hold — even just an id.
+| Field | Description |
+| --- | --- |
+| `id` | Your app's stable user id (Firebase UID, database id, …). The only required field |
+| `firstName`, `lastName` | Optional; a winner is asked for them at prize claim if missing |
+| `phone` | Optional, E.164. Stored on the profile; the SDK never sends SMS on its own |
+| `email` | Optional. When passed, the capture screen shows it pre-filled and read-only (Avafli links accounts across devices by email). Never records consent — the user still ticks the age/marketing boxes and submits. A malformed value is ignored and the field stays editable |
+| `.guest` | Nobody is signed in. The SDK mints a stable per-install `avafli_guest_…` id for attribution; the experience is fully functional and the streak survives a later `configure` with a real user |
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | `String` | ✅ | Your app's unique, stable user identifier (the only required field) |
-| `firstName` | `String` | — | User's first name; captured at prize-claim if omitted |
-| `lastName` | `String` | — | User's last name; captured at prize-claim if omitted |
-| `phone` | `String?` | — | Phone number in E.164 format |
-| `email` | `String?` | — | From your authenticated session. If passed, it pre-fills and **locks** the capture field; if omitted, the SDK captures it. A plain `String`. |
+---
 
-> **Email:** A supplied `email` never records consent — the user still ticks
-> the age (and optionally marketing) boxes and submits inside the Avafli flow. A
-> malformed value is ignored and the field stays editable. For apps with no
-> signed-in user, use `AvafliUser.guest`.
+## AvafliOptions
+
+```swift
+public struct AvafliOptions {
+    public enum LoggingLevel { case none, error, info, debug }
+
+    public let logging: LoggingLevel
+    public let analyticsAdapter: AnalyticsAdapter?
+    public let enablePushReminders: Bool
+
+    public init(
+        logging: LoggingLevel = .error,
+        analyticsAdapter: AnalyticsAdapter? = ConsoleAnalyticsAdapter(),
+        enablePushReminders: Bool = true
+    )
+}
+```
+
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `logging` | `.error` | SDK log verbosity (`print`-based; use `.debug` while integrating) |
+| `analyticsAdapter` | `ConsoleAnalyticsAdapter()` | Receives SDK events; pass `nil` to receive none |
+| `enablePushReminders` | `true` | `false` makes `registerForPushNotifications()` a no-op |
+
+---
+
+## AvafliEnvironment
+
+```swift
+public enum AvafliEnvironment {
+    case production
+}
+```
+
+The only environment. Sandbox testing is done with an `avafli_test_…` key, not
+a separate environment.
 
 ---
 
@@ -215,23 +281,30 @@ Pass whatever identity you already hold — even just an id.
 
 ```swift
 public enum AvafliError: Error {
-    case notConfigured
-    case noPresentingViewController
+    case notConfigured                // configure(_:) not called yet
+    case noPresentingViewController   // no key window / root view controller in a foreground-active scene
     case network(Error)
     case invalidState
     case ineligibleToday
     case alreadyClaimed
     case invalidAPIKey
-    case unauthorizedBundleId
-    case giveawayNotActive
-    case authenticationRequired
-    case serviceUnavailable   // publisher suspended / API key revoked
-    case optedOut             // user exercised Right-to-Delete
+    case unauthorizedBundleId         // bundleId not registered to this key
+    case giveawayNotActive            // nothing running and no pending claim (or registration failed)
+    case authenticationRequired       // device not registered yet
+    case serviceUnavailable           // publisher suspended / key revoked — the SDK presents nothing
+    case optedOut                     // user deleted their data; rejoin possible after 24 hours
+    case geoBlocked                   // backend geo-fence rejected the request (non-US / unverifiable)
     case internalError(String)
 }
 ```
 
-Conforms to `LocalizedError`; every case provides an `errorDescription`.
+Conforms to `LocalizedError`; every case has an `errorDescription`. The cases a
+host app can receive from `present(completion:)` are `.notConfigured`,
+`.serviceUnavailable`, `.optedOut`, `.giveawayNotActive` and
+`.noPresentingViewController`; `optOut()` throws `.notConfigured` and
+`.authenticationRequired`. The rest are used inside the experience, which
+renders its own messaging (for example a "Not available in your location" state
+for `.geoBlocked`).
 
 ---
 
@@ -242,10 +315,14 @@ public struct DailyEntryGrant {
     public let baseEntries: Int
     public let bonusEntries: Int
     public var total: Int { baseEntries + bonusEntries }
+    public init(baseEntries: Int, bonusEntries: Int = 0)
 }
 ```
 
-The entries granted during a session (auto-opened or via `present(completion:)`). `baseEntries` is the daily streak-ladder amount (a simple +10 per day); `bonusEntries` defaults to `0` and holds any additional entries granted alongside the daily amount.
+The entries granted by one day's claim: `baseEntries` from the giveaway's
+ladder for the streak day, `bonusEntries` from weekly/monthly/milestone
+bonuses. It is the payload of `present(completion:)`'s `.success` case, which
+the 3.3.0 experience does not deliver (see above).
 
 ---
 
@@ -257,23 +334,88 @@ public protocol AnalyticsAdapter {
 }
 ```
 
-Implement to route Avafli events to your analytics backend (Firebase Analytics, Amplitude, Mixpanel, …). The SDK ships with `ConsoleAnalyticsAdapter` (logs to the Xcode console) as the default.
+Implement to forward SDK events to your analytics stack. Convenience helpers
+are provided as a public protocol extension (each calls `track` with the
+matching `AvafliAnalyticsEvent` name): `trackRegistration(userId:)`,
+`trackExperienceOpened(giveawayId:)`, `trackExperienceClosed(giveawayId:)`,
+`trackDailyEntryClaimed(day:entries:)`, `trackBonusEntryClaimed(source:entries:)`,
+`trackStreakMilestone(day:bonusEntries:)`, `trackPrizeWon(prizeName:prizeValue:)`.
 
-Convenience helpers are provided as protocol extensions: `trackRegistration(userId:)`, `trackExperienceOpened(giveawayId:)`, `trackExperienceClosed(giveawayId:)`, `trackDailyEntryClaimed(day:entries:)`, `trackPrizeWon(prizeName:prizeValue:)`.
+Events are buffered while offline and flushed on the next launch or
+foreground, so `track` may be called later than the user action.
 
----
+## ConsoleAnalyticsAdapter
+
+```swift
+public final class ConsoleAnalyticsAdapter: AnalyticsAdapter {
+    public init()
+    public func track(event: String, properties: [String: Any]?)
+}
+```
+
+The default adapter. Logs `[Avafli] <event> | key=value, …` through `os_log`
+(subsystem `com.winr.sdk`, category `Analytics`) so events show in Xcode and
+Console.app with no setup.
 
 ## AvafliAnalyticsEvent
 
-Event-name constants emitted by the SDK:
+```swift
+public enum AvafliAnalyticsEvent {
+    public static let registration       = "avafli_registration"
+    public static let experienceOpened   = "avafli_experience_opened"
+    public static let experienceClosed   = "avafli_experience_closed"
+    public static let dailyEntryClaimed  = "avafli_daily_entry_claimed"
+    public static let bonusEntryClaimed  = "avafli_bonus_entry_claimed"
+    public static let streakMilestone    = "avafli_streak_milestone"
+    public static let prizeWon           = "avafli_prize_won"
+    // Legacy aliases
+    public static let experiencePresented = experienceOpened
+    public static let dailyEntriesClaimed = dailyEntryClaimed
+}
+```
 
-| Constant | Event name | When |
-|----------|------------|------|
-| `registration` | `avafli_registration` | Device/user registered with Avafli |
-| `experienceOpened` | `avafli_experience_opened` | The experience opened (once-per-day auto-open) |
-| `experienceClosed` | `avafli_experience_closed` | The experience was dismissed |
-| `dailyEntryClaimed` | `avafli_daily_entry_claimed` | Daily entries awarded (auto-claimed on open) |
-| `prizeWon` | `avafli_prize_won` | The user was selected as a winner |
+What the 3.3.0 experience actually sends to your adapter:
+
+| Event | When | Properties |
+| --- | --- | --- |
+| `avafli_experience_opened` | Every time the drawer opens (auto-open or `present()`) | `giveaway_id` |
+| `avafli_daily_entry_claimed` | The day's entries were recorded (also for a claim recovered after an offline retry, with `recovered_offline: true`) | `day`, `entries`, milestone details when one was hit |
+| `avafli_streak_milestone` | A milestone day awarded bonus entries | `streak_day`, `bonus_entries` |
+| `avafli_badge_earned` | That milestone also carried a badge | `badge`, `milestone_day`, `bonus_entries` |
+| `avafli_winner_claim_shown` | The winner splash was shown | `giveaway_id` |
+| `avafli_prize_claim_submitted` | The winner submitted the claim form | `giveaway_id`, `claim_number` |
+
+`avafli_registration`, `avafli_experience_closed`, `avafli_bonus_entry_claimed`
+and `avafli_prize_won` are defined as constants but are **not emitted** by the
+3.3.0 experience.
+
+---
+
+## PushNotificationManager
+
+```swift
+public final class PushNotificationManager: NSObject {
+    public static let shared: PushNotificationManager
+    public func register()
+    public func didRegisterForRemoteNotifications(deviceToken: Data)
+    public func didReceiveFCMToken(_ token: String)
+    public func didFailToRegisterForRemoteNotifications(error: Error)
+    public func scheduleLocalStreakReminder()
+    public func cancelStreakReminders()
+}
+```
+
+The object behind `Avafli.registerForPushNotifications()` and the three
+`Avafli.did…` forwarders (prefer those — they honour `enablePushReminders`).
+Two members are only reachable here:
+
+- `scheduleLocalStreakReminder()` — (re)schedules the local fallback: a
+  repeating daily notification at 6 PM device time, "Don't lose your streak!".
+  The SDK calls it itself when permission is denied, when APNs registration
+  fails, and when an APNs token arrives before any FCM token was registered.
+- `cancelStreakReminders()` — removes that local reminder. The SDK never calls
+  it on its own; call it if your app sends its own reminders or after an FCM
+  token has been registered and you do not want a local nudge as well.
 
 ---
 
@@ -285,3 +427,28 @@ public enum AvafliConstants {
     public static let platformOS = "iOS"
 }
 ```
+
+`sdkVersion` is reported to the backend at registration and matches the
+podspec and the latest CHANGELOG entry.
+
+---
+
+## Public but not for host use
+
+These symbols are `public` because the SDK's own SwiftUI layer needs them
+across files. A host app has no reason to call them.
+
+- **`AvafliBranding`** — the resolved theme (colors, corner radius, logo,
+  logo sizes). Branding is server-driven: the SDK builds it from the
+  dashboard's logo / primary color / prize image and falls back to its built-in
+  dark theme when no server config has loaded yet. Constructing one in your
+  app has no effect on the drawer.
+- **`AvafliLogo`** — `.asset(name:)`, `.remote(url:)`, `.system(_:)`,
+  `.bundled(name:)`; the logo source inside `AvafliBranding`.
+- **`Color.init(hex:)`** — a public `SwiftUI.Color` extension used by the
+  theme. If your app defines its own `Color(hex:)`, yours takes precedence
+  inside your module.
+- **Demo hooks** on `Avafli` — `demoPerform(_:completion:)`,
+  `demoWipeIdentity()`, `demoClearDailyMarks()`. They exist for the bundled
+  sample app and are hard-gated to its bundle ID (and to a server-side demo
+  publisher): in any other app they return `false` / do nothing.

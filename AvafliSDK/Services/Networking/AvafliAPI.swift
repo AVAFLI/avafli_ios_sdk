@@ -302,12 +302,12 @@ struct GiveawayConfig: Codable {
     /// the Aug 31 GTM decision the banner ALSO requires the admin-set
     /// sdkConfig.experience.winnerBannerEnabled flag (default off).
     let latestWinner: GiveawayWinner?
-    /// 3.3.0 — `"network"` when this is the shared network giveaway (one prize
+    /// 3.3.0 — `"network"` when this is the shared shared giveaway (one prize
     /// pool across many publisher apps, Avafli LLC as Sponsor of Record).
     /// Absent / `"publisher"` for a normal exclusive giveaway.
     let scope: String?
     /// 3.3.0 — Short sponsor line ("Sponsored by Avafli LLC"), present only
-    /// for network giveaways. Legally it MUST render wherever the prize is
+    /// for shared giveaways. Legally it MUST render wherever the prize is
     /// presented; absent → nothing is drawn and the layout is unchanged.
     let sponsorDisclosure: String?
 
@@ -669,7 +669,7 @@ struct PrizeClaimBlock: Codable {
     /// the publisher's network pointer, so the winner's app cannot borrow this
     /// from `GiveawayConfig` — the claim block carries its own copy.
     let scope: String?
-    /// 3.3.0 — Sponsor line ("Sponsored by Avafli LLC") for a network-giveaway
+    /// 3.3.0 — Sponsor line ("Sponsored by Avafli LLC") for a shared-giveaway
     /// win; drawn under the prize on the winner splash. Absent → nothing drawn.
     let sponsorDisclosure: String?
 

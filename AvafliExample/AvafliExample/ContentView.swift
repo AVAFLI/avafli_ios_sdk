@@ -226,12 +226,11 @@ struct ContentView: View {
     }
 
     private func resetDemoState() {
-        // The SDK namespaces its auto-present bookkeeping by bundle id.
-        let bundleId = Bundle.main.bundleIdentifier ?? "com.avafli.winr.example"
-        let defaults = UserDefaults.standard
-        defaults.removeObject(forKey: "winr_last_auto_present_\(bundleId)")
-        defaults.removeObject(forKey: "winr_unregistered_impressions_\(bundleId)")
-        print("🔄 Avafli demo state reset — kill and relaunch the app to see auto-open again")
+        // Demo-only hook (inert outside this sample's bundle id): clears the
+        // SDK's once-per-day auto-open mark and the unregistered impression
+        // counter.
+        Avafli.demoClearDailyMarks()
+        print("Avafli demo state reset — kill and relaunch the app to see auto-open again")
     }
 }
 

@@ -1,38 +1,39 @@
-# Avafli SDK — Code Examples
+# Avafli iOS SDK — Code Examples
 
-Real-world integration examples for common use cases. See the [README](../README.md) for the canonical API overview.
+Copy-paste recipes that compile against 3.3.0. See the [README](../README.md)
+for the walkthrough and [API_REFERENCE.md](API_REFERENCE.md) for signatures.
 
----
-
-## 1. Minimal Integration
-
-Configure once at launch — the experience auto-opens on the first app-open of each day and claims entries automatically:
+## 1. Minimal integration (UIKit lifecycle)
 
 ```swift
+import UIKit
 import AvafliSDK
 
-// AppDelegate.swift
-func application(_ application: UIApplication,
-                 didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-    let config = AvafliConfiguration(
-        apiKey: "YOUR_API_KEY",
-        bundleId: Bundle.main.bundleIdentifier ?? "",
-        user: AvafliUser(
-            id: "user_123",
-            firstName: "Jane",
-            lastName: "Doe"
-        )
-    )
-    Avafli.configure(config)
-    return true
+@main
+final class AppDelegate: UIResponder, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        #if DEBUG
+        let apiKey = "avafli_test_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        #else
+        let apiKey = "avafli_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        #endif
+
+        Avafli.configure(AvafliConfiguration(
+            apiKey: apiKey,
+            bundleId: Bundle.main.bundleIdentifier!,
+            user: AvafliUser(id: "user_123", firstName: "Jane", lastName: "Doe"),
+            options: AvafliOptions(logging: .debug)
+        ))
+        return true
+    }
 }
 ```
 
-Uses `ConsoleAnalyticsAdapter` (logs to Xcode console) by default. Branding is server-driven — nothing to configure in code. The experience auto-opens by default; see [Show After Onboarding](#7-show-after-onboarding) to control the timing yourself.
+The drawer opens itself once per day and claims entries automatically. Events
+go to the Xcode console through the default `ConsoleAnalyticsAdapter`.
 
----
-
-## 2. SwiftUI App Integration
+## 2. SwiftUI `App` lifecycle
 
 ```swift
 import SwiftUI
@@ -42,55 +43,77 @@ import AvafliSDK
 struct MyApp: App {
     init() {
         Avafli.configure(AvafliConfiguration(
-            apiKey: "YOUR_API_KEY",
-            bundleId: Bundle.main.bundleIdentifier ?? "",
-            user: AvafliUser(id: "user_123", firstName: "Jane", lastName: "Doe")
+            apiKey: "avafli_test_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            bundleId: Bundle.main.bundleIdentifier!,
+            user: .guest                     // nobody signed in — the SDK mints a stable guest id
         ))
     }
 
     var body: some Scene {
-        WindowGroup {
-            ContentView()
-        }
+        WindowGroup { ContentView() }
     }
 }
 ```
 
-The auto-open flow needs no further wiring — the experience opens itself once per day.
+No `AppDelegate` is needed; the SDK presents over the key window's root view
+controller once the scene is active.
 
----
-
-## 3. Push Notification Wiring
+## 3. Upgrade a guest to a signed-in user
 
 ```swift
-import AvafliSDK
-import FirebaseMessaging
+// At launch, before sign-in
+Avafli.configure(AvafliConfiguration(apiKey: apiKey, bundleId: bundleId, user: .guest))
 
-// After Avafli.configure(...)
-Avafli.registerForPushNotifications()
+// After sign-in — same call, real identity. Streak and session carry over.
+Avafli.configure(AvafliConfiguration(
+    apiKey: apiKey,
+    bundleId: bundleId,
+    user: AvafliUser(id: account.id, firstName: account.firstName, lastName: account.lastName, email: account.email)
+))
+```
 
-// AppDelegate
-func application(_ application: UIApplication,
-                 didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-    Avafli.didRegisterForRemoteNotifications(deviceToken: deviceToken)
-}
+## 4. Show the drawer after onboarding
 
-func application(_ application: UIApplication,
-                 didFailToRegisterForRemoteNotificationsWithError error: Error) {
-    Avafli.didFailToRegisterForRemoteNotifications(error: error)
-}
+```swift
+// Launch — registers the device now, never auto-opens
+Avafli.configure(AvafliConfiguration(
+    apiKey: apiKey,
+    bundleId: Bundle.main.bundleIdentifier!,
+    user: AvafliUser(id: "user_123"),
+    autoOpen: .never                // or .returningUsersOnly to skip only the first-ever session
+))
 
-// MessagingDelegate — required for server-sent reminders
-func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
-    if let fcmToken { Avafli.didReceiveFCMToken(fcmToken) }
+// Onboarding-complete handler (main thread)
+func onboardingDidComplete() {
+    let accepted = Avafli.present { result in
+        if case .failure(let error) = result {
+            print("Avafli could not open: \(error.localizedDescription)")
+        }
+    }
+    if !accepted { print("Nothing to show right now") }
 }
 ```
 
-Apps without Firebase Messaging still get a daily **local** streak reminder as a fallback.
+`present()` bypasses the once-per-day mark and the impression cap, waits for
+registration if it is still in flight, and is a no-op if the drawer is already
+open. The `.success` case is not delivered in 3.3.0 — see example 6 for how to
+observe the claim.
 
----
+## 5. Hold the auto-open through a boot flow
 
-## 4. Custom Analytics Adapter
+```swift
+// AppDelegate — before configure
+Avafli.holdAutoOpen()
+Avafli.configure(config)
+
+// Main screen — once your root UI is on screen (e.g. viewDidAppear of your home controller)
+Avafli.releaseAutoOpen()
+```
+
+Nothing is burned while held (no daily mark, no impression); `present()` still
+works.
+
+## 6. Forward events to your analytics stack
 
 ```swift
 import AvafliSDK
@@ -98,101 +121,110 @@ import AvafliSDK
 final class SegmentAnalyticsAdapter: AnalyticsAdapter {
     func track(event: String, properties: [String: Any]?) {
         Analytics.shared().track(event, properties: properties)
-    }
-}
 
-let config = AvafliConfiguration(
-    apiKey: "YOUR_API_KEY",
-    bundleId: Bundle.main.bundleIdentifier ?? "",
-    user: AvafliUser(id: "user_123", firstName: "Jane", lastName: "Doe"),
-    options: AvafliOptions(
-        logging: .info,
-        analyticsAdapter: SegmentAnalyticsAdapter(),
-        enablePushReminders: true
-    )
-)
-Avafli.configure(config)
-```
-
-See the [event list](API_REFERENCE.md#avaflianalyticsevent) for everything the SDK emits.
-
----
-
-## 5. Account Deletion in Your App
-
-If your app has its own delete-account flow, call `optOut()` from it so the
-user's Avafli data is erased along with their account. It scrubs the person's
-PII everywhere (including prize-claim records), links their devices so one call
-covers all of them, tombstones so it survives a reinstall, and permanently
-silences the experience:
-
-```swift
-// From your delete-account flow
-Task {
-    do {
-        try await Avafli.optOut()
-        print("Avafli data erased; experience permanently silenced.")
-    } catch {
-        print("Opt-out failed: \(error)")
-    }
-}
-```
-
-Users can also delete their data themselves at any time — no integration
-required: the Privacy Policy opens in an in-app webview from any legal link,
-and its **Delete my data & stop participating** section confirms and runs the
-same erasure.
-
----
-
-## 6. Environments
-
-```swift
-```
-
----
-
-## 7. Show After Onboarding
-
-By default the experience auto-opens once per calendar day. If your first-run
-flow has its own onboarding, keep the drawer out of it: set `autoOpen` on the
-configuration and open the drawer yourself with `Avafli.present()` when the
-moment is right. Registration and analytics (DAU/MAU) still run on
-`configure(_:)` regardless of mode.
-
-```swift
-import AvafliSDK
-
-// AppDelegate.swift — configure as usual, but never auto-open
-let config = AvafliConfiguration(
-    apiKey: "YOUR_API_KEY",
-    bundleId: Bundle.main.bundleIdentifier ?? "",
-    user: AvafliUser(id: "user_123"),
-    autoOpen: .never   // or .returningUsersOnly to skip only the first-ever launch
-)
-Avafli.configure(config)
-
-// OnboardingViewController.swift — open the drawer once onboarding is done
-func onboardingDidComplete() {
-    let started = Avafli.present { result in
-        switch result {
-        case .success(let grant):
-            print("Entry claimed — \(grant.total) entries today")
-        case .failure(let error):
-            print("Avafli present failed: \(error)")
+        if event == AvafliAnalyticsEvent.dailyEntryClaimed,
+           let day = properties?["day"] as? Int,
+           let entries = properties?["entries"] as? Int {
+            print("Day \(day): +\(entries) entries")      // the moment today's entries were recorded
         }
     }
-    if !started { print("Nothing to show (not configured / no presenting view controller)") }
+}
+
+Avafli.configure(AvafliConfiguration(
+    apiKey: apiKey,
+    bundleId: Bundle.main.bundleIdentifier!,
+    user: AvafliUser(id: "user_123"),
+    options: AvafliOptions(logging: .info, analyticsAdapter: SegmentAnalyticsAdapter())
+))
+```
+
+Events emitted in 3.3.0: `avafli_experience_opened`, `avafli_daily_entry_claimed`,
+`avafli_streak_milestone`, `avafli_badge_earned`, `avafli_winner_claim_shown`,
+`avafli_prize_claim_submitted` ([details](API_REFERENCE.md#avaflianalyticsevent)).
+Pass `analyticsAdapter: nil` to receive nothing.
+
+## 7. Push reminders (Firebase Messaging)
+
+```swift
+import UIKit
+import FirebaseCore
+import FirebaseMessaging
+import AvafliSDK
+
+final class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        FirebaseApp.configure()
+        Messaging.messaging().delegate = self
+
+        Avafli.configure(config)
+        Avafli.registerForPushNotifications()        // permission prompt + APNs registration
+        return true
+    }
+
+    func application(_ application: UIApplication,
+                     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        Messaging.messaging().apnsToken = deviceToken
+        Avafli.didRegisterForRemoteNotifications(deviceToken: deviceToken)
+    }
+
+    func application(_ application: UIApplication,
+                     didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        Avafli.didFailToRegisterForRemoteNotifications(error: error)
+    }
+
+    // Required for server-sent reminders
+    func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
+        if let fcmToken { Avafli.didReceiveFCMToken(fcmToken) }
+    }
 }
 ```
 
-`present()` ignores the once-a-day rule and the impression cap, waits for
-device registration if it is still in flight, and no-ops if the drawer is
-already on screen or the user has opted out. `.returningUsersOnly` is the
-lighter option: it skips the auto-open only on the launch where the device is
-first registered, then behaves like `.always`.
+Upload a service-account key from the same Firebase project in the dashboard;
+reminders are sent through your project. Without an FCM token the SDK falls
+back to a local 6 PM reminder, which you can remove with
+`PushNotificationManager.shared.cancelStreakReminders()`.
 
-If your boot flow clears the navigation stack (splash screen, auth gate), call
-`Avafli.holdAutoOpen()` before `configure(_:)` and `Avafli.releaseAutoOpen()`
-once your main screen is on screen — the daily auto-open is deferred, nothing
-is burned, and `present()` still works while held.
+## 8. Turn reminders off
+
+```swift
+AvafliOptions(enablePushReminders: false)   // registerForPushNotifications() becomes a no-op
+```
+
+## 9. Account deletion from your own flow
+
+```swift
+func deleteAccountTapped() {
+    Task {
+        do {
+            try await Avafli.optOut()
+            // Avafli data erased identity-wide; this device is silent for 24 hours,
+            // after which the person may join again as a new participant.
+        } catch AvafliError.notConfigured, AvafliError.authenticationRequired {
+            // Nothing registered with Avafli yet — nothing to erase.
+        } catch {
+            print("Avafli opt-out failed: \(error)")   // network — retry later
+        }
+        // …then delete the account in your own backend
+    }
+}
+```
+
+Users can also do this themselves from the in-app Privacy Policy
+(**Delete my data & stop participating**).
+
+## 10. Handle `present()` refusals
+
+```swift
+Avafli.present { result in
+    guard case .failure(let error) = result else { return }
+    switch error {
+    case .optedOut:            break   // user deleted their data; rejoin possible after 24 h
+    case .giveawayNotActive:   break   // nothing running (or registration failed) — hide your entry point
+    case .serviceUnavailable:  break   // account suspended — hide your entry point
+    case .notConfigured:       break   // configure(_:) was not called
+    case .noPresentingViewController: break
+    default:                   break
+    }
+}
+```

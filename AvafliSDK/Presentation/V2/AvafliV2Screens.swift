@@ -785,7 +785,7 @@ struct AvafliV2CaptureView: View {
                 Text("$\(value.formatted()).00 Value!")
                     .font(AvafliV2Font.inter(16))
             }
-            // 3.3.0: network giveaway sponsor line, directly under the prize.
+            // 3.3.0: shared giveaway sponsor line, directly under the prize.
             // Absent for exclusive giveaways → nothing mounts, strip unchanged.
             if let sponsorDisclosure = giveaway?.sponsorDisclosureLine {
                 AvafliV2SponsorDisclosureLine(

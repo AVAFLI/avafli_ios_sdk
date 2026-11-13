@@ -1,202 +1,209 @@
-# Avafli SDK — Getting Started Guide
+# Avafli iOS SDK — Getting Started
 
-## Overview
+A 15-minute path from an empty project to a working daily-entry sweepstakes.
+The [README](../README.md) covers the same ground in more depth;
+[API_REFERENCE.md](API_REFERENCE.md) lists every public symbol.
 
-Avafli SDK enables app publishers to instantly add sweepstakes and prizing functionality to their iOS apps. Users earn daily entries on a simple +10-per-day streak ladder, claimed automatically when the drawer opens. The SDK handles device registration, token management, email capture (with explicit marketing consent and a publisher-configurable age gate), streak tracking, and entry submission behind a fully managed UI.
+## 1. Requirements
 
-The V2 experience is a bottom drawer that opens itself on the first app-open of each day, claims the user's daily entries automatically, and celebrates the result. You integrate once; prize configuration and branding are managed server-side from the Avafli dashboard.
+- iOS 15.0+, Xcode 15.0+, Swift 5.9+
+- A UIKit app (`AppDelegate`/`SceneDelegate`) or a SwiftUI `App` — the drawer
+  is presented over the key window's root view controller
+- A publisher API key from the [Avafli dashboard](https://sdk.avafli.com/dashboard)
+  ([pricing](https://sdk.avafli.com/pricing)), with your app's bundle ID
+  registered to it
 
-> This guide is a condensed walkthrough. The [README](../README.md) is the canonical reference for the current API surface.
+## 2. Install
 
----
+Module, SPM product and pod are all named `AvafliSDK`.
 
-## Requirements
-
-| Requirement | Minimum Version |
-|-------------|----------------|
-| iOS | 15.0+ |
-| Xcode | 15.0+ |
-| Swift | 5.9+ |
-| Publisher API Key | Contact info@avafli.com |
-
-The SDK uses SwiftUI for its presentation layer and requires a UIKit host app (UIViewController-based presentation).
-
----
-
-## Installation
-
-### Swift Package Manager (Recommended)
-
-1. In Xcode, go to **File → Add Package Dependencies**
-2. Enter the repository URL:
-   ```
-   https://github.com/AVAFLI/avafli_ios_sdk.git
-   ```
-3. Set the dependency rule to **Up to Next Major Version** from `3.3.0`
-4. Add the `AvafliSDK` library to your app target
-
-Or in `Package.swift`:
+**Swift Package Manager** — Xcode: *File → Add Package Dependencies…* →
+`https://github.com/AVAFLI/avafli_ios_sdk.git` → *Up to Next Major Version*
+from `3.3.1` → add `AvafliSDK` to your app target. Or:
 
 ```swift
-dependencies: [
-    .package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.3.0")
-]
+.package(url: "https://github.com/AVAFLI/avafli_ios_sdk.git", from: "3.3.1")
 ```
 
-### CocoaPods
-
-
-Add the pod to your `Podfile` and install:
+**CocoaPods**
 
 ```ruby
-pod 'AvafliSDK', '~> 3.0'
+pod 'AvafliSDK', '~> 3.3'
 ```
 
-```bash
-pod install
-```
+## 3. Configure
 
----
-
-## Configure the SDK
-
-Call `Avafli.configure(_:)` once at app launch:
+One call at launch. Use the `avafli_test_…` sandbox key from your dashboard in
+debug builds and the `avafli_live_…` key in release builds.
 
 ```swift
 import AvafliSDK
 
-let config = AvafliConfiguration(
-    apiKey: "YOUR_API_KEY",
-    bundleId: "com.example.myapp",
-    autoOpen: .always,  // or .returningUsersOnly / .never
-    user: AvafliUser(
-        id: "user_123",
-        firstName: "Jane",
-        lastName: "Doe"
-    )
-)
-Avafli.configure(config)
-```
+func application(_ application: UIApplication,
+                 didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+    #if DEBUG
+    let apiKey = "avafli_test_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    #else
+    let apiKey = "avafli_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    #endif
 
-That's it. Configuration registers the device in the background and fetches the active giveaway. The experience then **auto-opens once per calendar day** — on launch and whenever the app returns to the foreground on a new day. Entries are claimed automatically when the drawer opens.
-
-Auto-open behavior:
-
-- It can be disabled remotely from the dashboard (`experience.autoOpenEnabled`).
-- Unregistered users (no confirmed email) see at most 3 auto-opens, then the SDK goes quiet until they register.
-- Users who opted out (Right-to-Delete) never see the experience again.
-
-One call, and the experience opens itself once per day. If your app needs to decide the moment, see [Controlling when the drawer opens](#controlling-when-the-drawer-opens) below.
-
-> **Email:** If your app has an authenticated session, pass the user's email via `AvafliUser(email:)`. The capture screen then shows that address pre-filled and **locked** (read-only) — Avafli links accounts across devices by email, so a partner-authenticated address is the most reliable identity. Consent remains an explicit act inside the Avafli flow: the user still sees the address, ticks the age (and optionally marketing) boxes, and submits. A malformed email is ignored and the field stays editable. If your app has no signed-in user, pass `AvafliUser.guest` — the SDK mints a stable per-install guest id and captures email through its own consent UI.
->
-> Two email safeguards run inside that flow, no integration needed: typing an
-> address that already belongs to an existing Avafli account requires a 6-digit
-> code before the streak merges to this device (fresh signups and pre-filled
-> partner emails skip it), and a brand-new typed address gets a soft "verify
-> your email" chip on the dashboard — it never blocks daily play or the
-> prize draw. A winner proves their inbox with a 6-digit code before the claim
-> form (skipped if they already confirmed).
-
-### Controlling when the drawer opens
-
-The default is unchanged: the drawer opens itself once a day on app open. Three controls change that when you need to:
-
-- **`autoOpen` on the configuration** — `.always` (default), `.returningUsersOnly`, or `.never`. `.returningUsersOnly` keeps the drawer out of a first-time user's onboarding: it skips the auto-open on the launch where the device is first registered, then auto-opens normally on every later launch. `.never` means the SDK never auto-opens and you call `Avafli.present()`.
-- **`Avafli.present()`** — open the drawer from a button, a screen, or an onboarding-complete handler. It ignores the once-a-day rule and the impression cap, waits for registration if it is still in flight, and no-ops if the drawer is already open or the user has opted out. Returns `false` when there is nothing to show; the completion receives the `DailyEntryGrant` once today's entry is claimed.
-- **`Avafli.holdAutoOpen()` / `Avafli.releaseAutoOpen()`** — for boot flows. Call `holdAutoOpen()` before configuring to defer the daily auto-open (nothing is burned — no once-a-day mark, no impression), and `releaseAutoOpen()` once your main screen is ready; it re-runs the eligibility check immediately. `present()` still works while held.
-
-```swift
-let config = AvafliConfiguration(
-    apiKey: "YOUR_API_KEY",
-    bundleId: "com.example.myapp",
-    user: AvafliUser(id: "user_123"),
-    autoOpen: .never   // .always (default) | .returningUsersOnly | .never
-)
-Avafli.configure(config)
-
-// Later — e.g. from your onboarding-complete handler
-func onboardingDidComplete() {
-    Avafli.present { result in
-        // .success(grant) once today's entry is claimed; .failure(error) otherwise
-    }
+    Avafli.configure(AvafliConfiguration(
+        apiKey: apiKey,
+        bundleId: Bundle.main.bundleIdentifier!,
+        user: AvafliUser(id: "user_123"),          // or .guest when nobody is signed in
+        options: AvafliOptions(logging: .debug)    // .error for release
+    ))
+    return true
 }
 ```
 
-Registration and analytics (DAU/MAU) run on configure regardless of mode.
+SwiftUI lifecycle: put the same `Avafli.configure(...)` call in your `App`'s
+`init()`.
 
----
+That is the integration. The SDK registers the device in the background,
+fetches the active giveaway and opens the drawer once per calendar day — on
+launch and whenever the app returns to the foreground on a new day. Entries are
+claimed automatically when it opens.
 
-## Test with Your Sandbox Key
+**Identity.** Only `id` is required. Add `firstName`/`lastName` if you have
+them (otherwise the SDK asks a winner at prize claim) and `email` if your
+session is authenticated — a passed email is pre-filled and locked on the
+capture screen, but consent is still an explicit tick inside the flow. With
+`.guest` the SDK mints a stable per-install id; when the person signs in, call
+`configure` again with the real user and the streak carries over.
 
-Your dashboard shows a `avafli_test_…` key alongside your live key. Use it in
-debug builds: same production backend, identical behavior, but users and
-entries land in an isolated sandbox tenant — testers can never enter your real
-giveaway, and sandbox usage never counts toward MAU. Your registered bundle
-IDs work with both keys.
+## 4. What the user sees
 
-## Push Reminders
+- **Day 1:** email-capture screen (prize card, email, age checkbox, unchecked
+  marketing consent) → "You're in!" → dashboard with Day 1 claimed. An email
+  that already belongs to another device's account needs a 6-digit code first.
+- **Later days:** the drawer opens once a day, claims automatically and
+  celebrates; the user taps **GOT IT**. The entry ladder, streak mode (`daily`
+  resets on a miss; `visit` never resets) and milestones are set per giveaway
+  in the dashboard.
+- **Winner:** the drawer opens on a winner splash and a stepped claim form
+  (3-day claim window by default). The claim is keyed to the account
+  server-side; nothing for you to do.
+- **Shared giveaway:** if you opt in, a required "Sponsored by Avafli LLC" line
+  appears under the prize.
+- **Legal:** Official Rules and the Privacy Policy open in an in-app web view;
+  the policy includes **Delete my data & stop participating**.
+- **Branding:** logo, prize image and primary color come from the dashboard.
 
-The SDK can nudge users to keep their streak alive. After configuring:
+## 5. Controlling presentation
+
+Default: auto-open once per day. Three controls when you need them —
+registration and analytics still run on `configure(_:)` in every mode.
+
+| Control | Use it when |
+| --- | --- |
+| `autoOpen: .returningUsersOnly` | You have first-run onboarding. Skips the auto-open only in the session where the device first registers |
+| `autoOpen: .never` + `Avafli.present()` | You decide the moment (a button, a screen, onboarding complete) |
+| `Avafli.holdAutoOpen()` before `configure`, `Avafli.releaseAutoOpen()` when your main screen is up | Your boot flow (splash, auth gate) must not be covered. Nothing is burned while held; `present()` still works |
 
 ```swift
-Avafli.registerForPushNotifications()  // no-op if AvafliOptions.enablePushReminders is false
+Avafli.configure(AvafliConfiguration(
+    apiKey: apiKey,
+    bundleId: Bundle.main.bundleIdentifier!,
+    user: AvafliUser(id: "user_123"),
+    autoOpen: .never
+))
+
+// Later — e.g. from your onboarding-complete handler (main thread)
+let accepted = Avafli.present { result in
+    if case .failure(let error) = result { print("Avafli: \(error.localizedDescription)") }
+}
 ```
 
-Forward the APNs callbacks from your `AppDelegate`:
+`present()` bypasses the once-per-day mark and the impression cap, waits for
+registration if it is still in flight, and returns `false` (with a `.failure`
+completion) when there is nothing to show: not configured, opted out,
+suspended, no active giveaway and no pending claim, or no presenting view
+controller. In 3.3.0 the `.success` case is not delivered — entries are claimed
+inside the drawer; observe `avafli_daily_entry_claimed` through your analytics
+adapter if you need the moment.
+
+The dashboard can set a server-side mode too; the most restrictive wins, and
+its `autoOpenEnabled` kill switch beats everything. A winner with a pending
+claim reopens the drawer on every cold launch (and on foreground after 30
+minutes) regardless of the daily mark, so they can always finish the claim.
+
+## 6. Push reminders
+
+Reminders are sent through **your** Firebase project. Upload a service-account
+key in the dashboard, then forward the tokens:
 
 ```swift
+Avafli.registerForPushNotifications()   // after configure; no-op if enablePushReminders is false
+
+// AppDelegate
 func application(_ application: UIApplication,
                  didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
     Avafli.didRegisterForRemoteNotifications(deviceToken: deviceToken)
 }
-
 func application(_ application: UIApplication,
                  didFailToRegisterForRemoteNotificationsWithError error: Error) {
     Avafli.didFailToRegisterForRemoteNotifications(error: error)
 }
-```
 
-If your app uses Firebase Messaging, also forward the FCM registration token so Avafli's backend can send server-driven reminders through your Firebase project:
-
-```swift
-// MessagingDelegate
+// MessagingDelegate — required for server-sent reminders
 func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
     if let fcmToken { Avafli.didReceiveFCMToken(fcmToken) }
 }
 ```
 
-Without an FCM token (or if notification permission is denied), the SDK falls back to a daily **local** reminder.
+Without an FCM token (or with permission denied) the SDK schedules a local
+daily reminder at 6 PM device time instead. `enablePushReminders: false` turns
+reminders off entirely.
 
----
+## 7. Account deletion
 
-## Branding
+Users can delete their data themselves from the in-app Privacy Policy. If your
+app has its own delete-account flow, add:
 
-The V2 experience is server-driven: logo, prize image, and primary accent color are configured in the [Avafli Dashboard](https://sdk.avafli.com/dashboard) and update without an app release. There is nothing to configure in code.
+```swift
+try await Avafli.optOut()   // throws .notConfigured / .authenticationRequired
+```
 
----
+The erasure is identity-wide (all devices, including prize-claim records);
+entries and streaks are forfeited. For 24 hours that email and device cannot
+register and `present()` is refused with `.optedOut`; afterwards the person may
+join again as a brand-new participant and the SDK handles that on its own.
 
-## Analytics
+## 8. Testing checklist
 
-Route SDK events to your analytics stack by passing an `AnalyticsAdapter` in `AvafliOptions` — see [CODE_EXAMPLES.md](CODE_EXAMPLES.md) and the [README's Analytics section](../README.md#analytics) for the event list.
+1. Debug build, `avafli_test_…` key, `logging: .debug`. Look for
+   `Device registered: … (new user)` in the console.
+2. First launch: email capture → "You're in!" → Day 1 claimed.
+3. Relaunch the same day: no auto-open; `Avafli.present()` still opens it.
+4. Set the simulator clock to tomorrow and relaunch: auto-open, Day 2 claimed.
+5. Fresh user: erase the simulator (the session lives in the Keychain and
+   survives a reinstall) or use another device.
+6. Boot flow: the drawer never covers your splash/onboarding.
+7. Push: `Push token registered with backend` appears after the FCM token is
+   forwarded.
+8. Deletion: Privacy Policy → Delete my data → `present()` refused with
+   `.optedOut`.
+9. Winner flow: ask Avafli support to draw your sandbox giveaway for a tester.
+10. Release build: live key, `logging: .error`.
 
----
+Sandbox facts: same backend, isolated tenant, always-active test giveaway,
+never billed, your registered bundle IDs accepted. Testers can never enter
+your real giveaway.
 
-## Privacy & Account Deletion
+## 9. Free online entry (AMOE)
 
-- The SDK collects no advertising identifiers and never shows the App Tracking Transparency prompt.
-- **Account deletion in your app:** if your app has its own delete-account flow, call `try await Avafli.optOut()` from it so the user's Avafli data is erased along with their account (identity-wide, PII scrubbed, survives reinstall — the experience is permanently silenced on this device).
-- Users can also delete their data themselves at any time — no integration required: every legal link opens the Privacy Policy in an in-app webview, and its **Delete my data & stop participating** section confirms and performs the same erasure.
-- `optOut()` is the only erasure API — de-identified entry records are retained as the legally required evidence that drawings were fair.
+Every giveaway has a public free-entry form at
+`https://sdk.avafli.com/enter/<your-publisher-segment>/amoe?g=<giveawayId>` —
+the dashboard's Giveaway Management section shows the exact URL with a copy
+button and lets you customise the part after your publisher segment (the
+segment itself is assigned by Avafli; old links keep working). List it as the
+Online AMOE Web URL in your Client Addendum (Official Rules §11(E)). Entries
+made there join the same drawing pool and never earn streak bonuses. Nothing to
+integrate.
 
----
+## Next
 
-## Next Steps
-
-- [API Reference](API_REFERENCE.md) — every public type and method
-- [Code Examples](CODE_EXAMPLES.md) — copy-paste integration recipes
-- [README](../README.md) — canonical overview and API tables
-
-## Free online entry (AMOE)
-
-Every giveaway has a public free-entry form at `https://sdk.avafli.com/enter/<your-publisher-segment>/amoe?g=<giveawayId>` (your dashboard's Giveaway Management section shows the exact URL with a copy button). You can customise the part after your publisher segment from the same place ("Edit link"), e.g. `…/enter/skape/spring-sweeps`; the publisher segment itself is assigned by Avafli, and an old link keeps working after a change. List it as the **Online AMOE Web URL** in your Client Addendum (Official Rules §11(E)). Anyone can request their free daily entries there without installing your app; the entries go into the same drawing pool as in-app entries and never earn streak bonuses. The form carries your logo, accent colour, prize and consent copy from the same SDK configuration your app uses — nothing to integrate.
+- [API_REFERENCE.md](API_REFERENCE.md) — every public type and method
+- [CODE_EXAMPLES.md](CODE_EXAMPLES.md) — copy-paste recipes
+- [CHANGELOG.md](../CHANGELOG.md) — what changed in each release
